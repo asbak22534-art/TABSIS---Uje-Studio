@@ -1,0 +1,6 @@
+{
+  "name": "Tabungan Siswa",
+  "description": "Aplikasi PWA pengelolaan tabungan siswa khusus wali kelas dengan rekap transaksi, pencatatan setoran/penarikan, dan laporan otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
