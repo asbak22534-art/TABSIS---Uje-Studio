@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Wallet, Lock, User, AlertCircle, ArrowRight, CheckCircle2, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { Wallet, Lock, User, AlertCircle, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -7,8 +8,8 @@ export const LoginView: React.FC = () => {
   const { login } = useAuth();
   const { success, error: toastError } = useToast();
 
-  const [username, setUsername] = useState('walikelas');
-  const [password, setPassword] = useState('guru123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -35,17 +36,23 @@ export const LoginView: React.FC = () => {
     }
   };
 
-  const fillDemo = (u: string, p: string) => {
-    setUsername(u);
-    setPassword(p);
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-900 via-teal-900 to-slate-900 flex flex-col justify-center items-center px-4 py-8 relative overflow-y-auto">
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      className="min-h-screen bg-gradient-to-b from-emerald-900 via-teal-900 to-slate-900 flex flex-col justify-center items-center px-4 py-8 relative overflow-y-auto"
+    >
       {/* Subtle background glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="w-full max-w-md relative z-10">
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.05 }}
+        className="w-full max-w-md relative z-10"
+      >
         {/* Brand Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-white shadow-xl shadow-emerald-500/20 mb-4 ring-4 ring-emerald-500/20">
@@ -63,8 +70,8 @@ export const LoginView: React.FC = () => {
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-100/10">
           <div className="mb-6">
             <h2 className="text-lg font-bold text-slate-900">Masuk sebagai Wali Kelas</h2>
-            <p className="text-xs text-slate-700 mt-0.5">
-              Gunakan akun wali kelas default atau data dari sheet <strong>USERS</strong> Google Spreadsheet.
+            <p className="text-xs text-slate-600 mt-0.5">
+              Masukkan kredensial akun wali kelas Anda untuk melanjutkan.
             </p>
           </div>
 
@@ -74,7 +81,7 @@ export const LoginView: React.FC = () => {
               <div className="space-y-1">
                 <span className="text-xs font-semibold leading-relaxed block">{errorMessage}</span>
                 <p className="text-[11px] text-rose-800">
-                  Tip: Pastikan username &amp; kata sandi sesuai dengan kolom <code>username</code> dan <code>password_hash</code> di sheet USERS.
+                  Tip: Pastikan username &amp; kata sandi sesuai dengan akun terdaftar di sistem.
                 </p>
               </div>
             </div>
@@ -94,8 +101,9 @@ export const LoginView: React.FC = () => {
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Contoh: walikelas"
+                  placeholder="Masukkan username"
                   required
+                  autoFocus
                   className="w-full pl-10 pr-3.5 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 outline-none transition-all"
                 />
               </div>
@@ -133,7 +141,7 @@ export const LoginView: React.FC = () => {
               id="login-submit-btn"
               type="submit"
               disabled={isLoading}
-              className="w-full mt-2 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full mt-2 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <>
@@ -148,28 +156,6 @@ export const LoginView: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Quick Demo Helper */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
-            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/80">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  Akun Default &amp; Cloud Sheets
-                </span>
-                <button
-                  type="button"
-                  onClick={() => fillDemo('walikelas', 'guru123')}
-                  className="text-xs text-emerald-700 hover:text-emerald-800 font-semibold underline underline-offset-2 cursor-pointer"
-                >
-                  Isi Default
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-700">
-                Username: <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-slate-800 font-semibold">walikelas</code> • Kata sandi: <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-slate-800 font-semibold">guru123</code> (atau akun kustom Anda di sheet USERS)
-              </p>
-            </div>
-          </div>
         </div>
 
         {/* Security & Footer Info */}
@@ -177,7 +163,7 @@ export const LoginView: React.FC = () => {
           <p>Dirancang khusus untuk guru sekolah • Mobile First PWA</p>
           <p>Data tersinkronisasi aman dengan Google Sheets &amp; Database</p>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

@@ -12,7 +12,12 @@ interface AuthContextType {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isLoggingOut: boolean;
+  isLogoutModalOpen: boolean;
   login: (username: string, password: string) => Promise<void>;
+  requestLogout: () => void;
+  cancelLogout: () => void;
+  confirmLogout: () => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -22,13 +27,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
 
   useEffect(() => {
     const initAuth = async () => {
       const token = api.getToken();
       if (!token) {
-        // Auto-login with default demo credentials on first visit if preferred or keep clean
-        // We'll validate if token exists; if none, user can easily log in
         setIsLoading(false);
         return;
       }
@@ -52,9 +57,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(authSession.user);
   };
 
+  const requestLogout = () => {
+    setIsLogoutModalOpen(true);
+  };
+
+  const cancelLogout = () => {
+    if (!isLoggingOut) {
+      setIsLogoutModalOpen(false);
+    }
+  };
+
+  const confirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      // Small graceful pause for smooth UI exit animation
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      await api.logout();
+      setUser(null);
+      setIsLogoutModalOpen(false);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   const logout = async () => {
-    await api.logout();
-    setUser(null);
+    // Direct or fallback logout
+    requestLogout();
   };
 
   const refreshUser = async () => {
@@ -72,7 +100,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: !!user,
         isLoading,
+        isLoggingOut,
+        isLogoutModalOpen,
         login,
+        requestLogout,
+        cancelLogout,
+        confirmLogout,
         logout,
         refreshUser
       }}

@@ -9,6 +9,7 @@ import { TransactionView } from './components/TransactionView';
 import { StudentDetailView } from './components/StudentDetailView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
+import { LogoutConfirmModal } from './components/LogoutConfirmModal';
 import { NavTab, AppSettings } from './types';
 import { api } from './lib/api';
 import { AnimatePresence, motion } from 'motion/react';
@@ -43,124 +44,153 @@ const MainAppContent: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-3 border-emerald-600/20 border-t-emerald-600 rounded-full animate-spin" />
-          <p className="text-xs font-bold text-slate-600">Memuat Tabungan Siswa...</p>
+          <div className="w-10 h-10 border-3 border-emerald-500/20 border-t-emerald-400 rounded-full animate-spin" />
+          <p className="text-xs font-bold text-emerald-200/80">Memuat Tabungan Siswa...</p>
         </div>
       </div>
     );
   }
 
-  if (!isAuthenticated) {
-    return <LoginView />;
-  }
-
-  const handleOpenDeposit = (studentId?: string) => {
-    setSelectedStudentId(null);
-    setTransactionInitialStudentId(studentId);
-    setTransactionInitialType('SETORAN');
-    setCurrentTab('transaction');
-  };
-
-  const handleOpenWithdraw = (studentId?: string) => {
-    setSelectedStudentId(null);
-    setTransactionInitialStudentId(studentId);
-    setTransactionInitialType('PENARIKAN');
-    setCurrentTab('transaction');
-  };
-
-  const handleSelectStudent = (studentId: string) => {
-    setSelectedStudentId(studentId);
-  };
-
-  const handleBackFromStudentDetail = () => {
-    setSelectedStudentId(null);
-  };
-
-  const handleNavigateTab = (tab: NavTab) => {
-    setSelectedStudentId(null);
-    setOpenAddStudentDirectly(false);
-    setCurrentTab(tab);
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col selection:bg-emerald-500 selection:text-white">
-      {/* Top and Bottom Navigation Bars */}
-      <Navbar
-        currentTab={currentTab}
-        onSelectTab={handleNavigateTab}
-        classNameTitle={settings?.class_name || 'Kelas 5A'}
-        schoolName={settings?.school_name || 'SD Negeri 01 Teladan'}
-      />
+    <AnimatePresence mode="wait">
+      {!isAuthenticated ? (
+        <motion.div
+          key="auth-login-screen"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22 }}
+        >
+          <LoginView />
+        </motion.div>
+      ) : (
+        <motion.div
+          key="auth-workspace-screen"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22 }}
+          className="min-h-screen bg-slate-50 text-slate-900 flex flex-col selection:bg-emerald-500 selection:text-white"
+        >
+          {/* Top and Bottom Navigation Bars */}
+          <Navbar
+            currentTab={currentTab}
+            onSelectTab={(tab) => {
+              setSelectedStudentId(null);
+              setOpenAddStudentDirectly(false);
+              setCurrentTab(tab);
+            }}
+            classNameTitle={settings?.class_name || 'Kelas 5A'}
+            schoolName={settings?.school_name || 'SD Negeri 01 Teladan'}
+          />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 md:pb-10">
-        <AnimatePresence mode="wait">
-          {selectedStudentId ? (
-            <motion.div
-              key={`student-detail-${selectedStudentId}`}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-            >
-              <StudentDetailView
-                studentId={selectedStudentId}
-                onBack={handleBackFromStudentDetail}
-                onOpenDeposit={handleOpenDeposit}
-                onOpenWithdraw={handleOpenWithdraw}
-              />
-            </motion.div>
-          ) : (
-            <motion.div
-              key={currentTab}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18 }}
-            >
-              {currentTab === 'dashboard' && (
-                <DashboardView
-                  onNavigate={handleNavigateTab}
-                  onOpenDeposit={handleOpenDeposit}
-                  onOpenWithdraw={handleOpenWithdraw}
-                  onSelectStudent={handleSelectStudent}
-                  onOpenAddStudent={() => {
-                    setOpenAddStudentDirectly(true);
-                    setCurrentTab('students');
-                  }}
-                />
+          {/* Main Container */}
+          <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 md:pb-10">
+            <AnimatePresence mode="wait">
+              {selectedStudentId ? (
+                <motion.div
+                  key={`student-detail-${selectedStudentId}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  <StudentDetailView
+                    studentId={selectedStudentId}
+                    onBack={() => setSelectedStudentId(null)}
+                    onOpenDeposit={(stId) => {
+                      setSelectedStudentId(null);
+                      setTransactionInitialStudentId(stId);
+                      setTransactionInitialType('SETORAN');
+                      setCurrentTab('transaction');
+                    }}
+                    onOpenWithdraw={(stId) => {
+                      setSelectedStudentId(null);
+                      setTransactionInitialStudentId(stId);
+                      setTransactionInitialType('PENARIKAN');
+                      setCurrentTab('transaction');
+                    }}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={currentTab}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  {currentTab === 'dashboard' && (
+                    <DashboardView
+                      onNavigate={(tab) => {
+                        setSelectedStudentId(null);
+                        setOpenAddStudentDirectly(false);
+                        setCurrentTab(tab);
+                      }}
+                      onOpenDeposit={(stId) => {
+                        setSelectedStudentId(null);
+                        setTransactionInitialStudentId(stId);
+                        setTransactionInitialType('SETORAN');
+                        setCurrentTab('transaction');
+                      }}
+                      onOpenWithdraw={(stId) => {
+                        setSelectedStudentId(null);
+                        setTransactionInitialStudentId(stId);
+                        setTransactionInitialType('PENARIKAN');
+                        setCurrentTab('transaction');
+                      }}
+                      onSelectStudent={(stId) => setSelectedStudentId(stId)}
+                      onOpenAddStudent={() => {
+                        setOpenAddStudentDirectly(true);
+                        setCurrentTab('students');
+                      }}
+                    />
+                  )}
+
+                  {currentTab === 'students' && (
+                    <StudentsView
+                      onSelectStudent={(stId) => setSelectedStudentId(stId)}
+                      onOpenDeposit={(stId) => {
+                        setSelectedStudentId(null);
+                        setTransactionInitialStudentId(stId);
+                        setTransactionInitialType('SETORAN');
+                        setCurrentTab('transaction');
+                      }}
+                      onOpenWithdraw={(stId) => {
+                        setSelectedStudentId(null);
+                        setTransactionInitialStudentId(stId);
+                        setTransactionInitialType('PENARIKAN');
+                      }}
+                      initialAddModalOpen={openAddStudentDirectly}
+                      onCloseAddModal={() => setOpenAddStudentDirectly(false)}
+                    />
+                  )}
+
+                  {currentTab === 'transaction' && (
+                    <TransactionView
+                      initialStudentId={transactionInitialStudentId}
+                      initialType={transactionInitialType}
+                      onGoToStudentDetail={(stId) => setSelectedStudentId(stId)}
+                    />
+                  )}
+
+                  {currentTab === 'reports' && (
+                    <ReportsView onSelectStudent={(stId) => setSelectedStudentId(stId)} />
+                  )}
+
+                  {currentTab === 'settings' && <SettingsView />}
+                </motion.div>
               )}
+            </AnimatePresence>
+          </main>
 
-              {currentTab === 'students' && (
-                <StudentsView
-                  onSelectStudent={handleSelectStudent}
-                  onOpenDeposit={handleOpenDeposit}
-                  onOpenWithdraw={handleOpenWithdraw}
-                  initialAddModalOpen={openAddStudentDirectly}
-                  onCloseAddModal={() => setOpenAddStudentDirectly(false)}
-                />
-              )}
-
-              {currentTab === 'transaction' && (
-                <TransactionView
-                  initialStudentId={transactionInitialStudentId}
-                  initialType={transactionInitialType}
-                  onGoToStudentDetail={handleSelectStudent}
-                />
-              )}
-
-              {currentTab === 'reports' && (
-                <ReportsView onSelectStudent={handleSelectStudent} />
-              )}
-
-              {currentTab === 'settings' && <SettingsView />}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
-    </div>
+          {/* Global Animated Logout Confirmation Modal */}
+          <LogoutConfirmModal />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 

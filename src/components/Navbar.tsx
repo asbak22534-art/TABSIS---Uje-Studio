@@ -35,9 +35,27 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="w-10 h-10 md:w-11 md:h-11 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 flex items-center justify-center text-white shadow-xs shrink-0 ring-1 ring-emerald-900/10">
               <Wallet className="w-5 h-5 md:w-5.5 md:h-5.5" />
             </div>
-            <span className="font-extrabold text-slate-900 tracking-tight text-base md:text-lg">
-              TABUNGAN SISWA
-            </span>
+            <div>
+              <span className="font-extrabold text-slate-900 tracking-tight text-base md:text-lg block leading-none">
+                TABUNGAN SISWA
+              </span>
+              <span className="text-[11px] font-medium text-emerald-800/80 hidden sm:inline-block mt-0.5">
+                {classNameTitle} • {schoolName}
+              </span>
+            </div>
+          </div>
+
+          {/* Mobile Header Logout Button */}
+          <div className="flex md:hidden items-center gap-2">
+            <button
+              id="logout-btn-mobile-header"
+              onClick={logout}
+              title="Keluar dari Akun"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 text-xs font-bold transition-all active:scale-95 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Keluar</span>
+            </button>
           </div>
 
           {/* Desktop Navigation Links */}
