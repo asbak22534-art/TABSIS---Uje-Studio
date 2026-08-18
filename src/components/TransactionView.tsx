@@ -11,12 +11,15 @@ import {
   User, 
   Sparkles,
   ArrowRight,
-  RefreshCw
+  RefreshCw,
+  Plus,
+  RotateCcw,
+  X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Student, Transaction, AppSettings } from '../types';
 import { api } from '../lib/api';
-import { formatRupiah, formatDateIndo, generateWhatsAppMessage } from '../lib/utils';
+import { formatRupiah, formatDateIndo, generateWhatsAppMessage, formatNumber, terbilangRupiah } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 
 interface TransactionViewProps {
@@ -90,17 +93,17 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
 
   const selectedStudent = students.find((s) => s.student_id === selectedStudentId);
 
-  // Quick Amount Chips
-  const quickAmounts = [10000, 20000, 50000, 100000, 200000, 500000];
-
-  const handleSelectQuickAmount = (val: number) => {
-    setAmount(val);
-    setErrorMessage('');
-  };
+  // Quick Amount Chips (Additive / Penambah)
+  const quickAmounts = [5000, 10000, 20000, 50000, 100000, 200000, 500000];
 
   const handleAddQuickAmount = (val: number) => {
     const current = Number(amount) || 0;
     setAmount(current + val);
+    setErrorMessage('');
+  };
+
+  const handleClearAmount = () => {
+    setAmount('');
     setErrorMessage('');
   };
 
@@ -513,47 +516,81 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                 2. Nominal Transaksi (Rp) *
               </label>
 
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-4 flex items-center font-bold text-slate-400 text-base">
+              <div className="relative flex items-center">
+                <span className="absolute inset-y-0 left-0 pl-4 flex items-center font-black text-slate-400 text-base select-none pointer-events-none">
                   Rp
                 </span>
                 <input
                   id="transaction-amount-input"
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   required
-                  min={1}
-                  value={amount}
+                  value={amount !== '' && Number(amount) > 0 ? formatNumber(Number(amount)) : ''}
                   onChange={(e) => {
-                    const val = e.target.value === '' ? '' : Number(e.target.value);
-                    setAmount(val);
+                    const rawDigits = e.target.value.replace(/\D/g, '');
+                    if (rawDigits === '') {
+                      setAmount('');
+                    } else {
+                      setAmount(Number(rawDigits));
+                    }
                     setErrorMessage('');
                   }}
                   placeholder="0"
-                  className="w-full pl-12 pr-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-xl font-black text-slate-900 focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 outline-none transition-all"
+                  className="w-full pl-12 pr-12 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 text-xl font-black text-slate-900 focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 outline-none transition-all placeholder:text-slate-300"
                 />
+                {amount !== '' && Number(amount) > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAmount}
+                    aria-label="Hapus nominal"
+                    className="absolute right-3.5 p-1.5 rounded-xl bg-slate-200/80 hover:bg-slate-300 text-slate-600 hover:text-slate-900 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
-              {/* Quick Amount Chips */}
-              <div className="mt-2.5">
-                <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
-                  Pilihan Nominal Cepat:
-                </span>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              {/* Spelled-out Terbilang Helper */}
+              {amount !== '' && Number(amount) > 0 && (
+                <div className="mt-1.5 px-3 py-1.5 bg-slate-100/90 rounded-xl text-[11px] font-medium text-slate-700 flex items-center gap-1.5 border border-slate-200/60">
+                  <span className="font-bold text-slate-500 shrink-0">Terbilang:</span>
+                  <span className="italic font-semibold text-emerald-800">{terbilangRupiah(Number(amount))}</span>
+                </div>
+              )}
+
+              {/* Quick Amount Chips - Additive / Cumulative */}
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">
+                    Pilihan Nominal Cepat (+ Penambah):
+                  </span>
+                  {amount !== '' && Number(amount) > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAmount}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Reset (0)</span>
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
                   {quickAmounts.map((q) => (
                     <button
                       key={q}
                       type="button"
-                      onClick={() => handleSelectQuickAmount(q)}
-                      className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
-                        amount === q
-                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                          : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                      }`}
+                      onClick={() => handleAddQuickAmount(q)}
+                      className="py-2.5 px-1.5 rounded-xl text-xs font-black border bg-white hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-800 text-slate-700 border-slate-200/90 shadow-2xs transition-all duration-100 active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
                     >
-                      {q >= 1000 ? `${q / 1000}K` : q}
+                      <span className="text-emerald-600 font-extrabold text-[11px]">+</span>
+                      <span>{q >= 1000 ? `${q / 1000}K` : q}</span>
                     </button>
                   ))}
                 </div>
+                <p className="mt-1.5 text-[10px] text-slate-700 font-medium">
+                  💡 <em>Klik tombol untuk menambah nominal (contoh: klik +10K dua kali maka otomatis terisi 20.000)</em>
+                </p>
               </div>
             </div>
 

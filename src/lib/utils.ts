@@ -14,10 +14,30 @@ export function formatRupiah(amount: number | undefined | null): string {
 }
 
 export function formatNumber(amount: number | undefined | null): string {
-  if (amount === undefined || amount === null || isNaN(amount)) {
-    return '0';
+  if (amount === undefined || amount === null || isNaN(amount) || amount === 0) {
+    return '';
   }
   return new Intl.NumberFormat('id-ID').format(amount);
+}
+
+export function terbilangRupiah(n: number): string {
+  if (!n || n <= 0) return '';
+  const satuan = ['', 'Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam', 'Tujuh', 'Delapan', 'Sembilan', 'Sepuluh', 'Sebelas'];
+  
+  function spell(x: number): string {
+    if (x < 12) return satuan[x];
+    if (x < 20) return spell(x - 10) + ' Belas';
+    if (x < 100) return spell(Math.floor(x / 10)) + ' Puluh ' + spell(x % 10);
+    if (x < 200) return 'Seratus ' + spell(x - 100);
+    if (x < 1000) return spell(Math.floor(x / 100)) + ' Ratus ' + spell(x % 100);
+    if (x < 2000) return 'Seribu ' + spell(x - 1000);
+    if (x < 1000000) return spell(Math.floor(x / 1000)) + ' Ribu ' + spell(x % 1000);
+    if (x < 1000000000) return spell(Math.floor(x / 1000000)) + ' Juta ' + spell(x % 1000000);
+    if (x < 1000000000000) return spell(Math.floor(x / 1000000000)) + ' Miliar ' + spell(x % 1000000000);
+    return '';
+  }
+  
+  return spell(Math.floor(n)).trim() + ' Rupiah';
 }
 
 export function formatDateIndo(dateStr: string | undefined | null): string {
