@@ -138,13 +138,16 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleResetData = async () => {
-    if (window.confirm('Apakah Anda yakin ingin memuat ulang data contoh? Data yang Anda ubah akan kembali ke keadaan awal.')) {
+    if (window.confirm('Apakah Anda ingin membersihkan cache lokal dan menyinkronkan ulang seluruh data langsung dari Google Spreadsheet?')) {
       try {
-        await api.resetDemoData();
-        success('Data Direset', 'Data contoh tabungan berhasil dipulihkan.');
-        setTimeout(() => window.location.reload(), 800);
+        setSyncing(true);
+        const res = await api.resetDemoData();
+        success('Sinkronisasi Sukses', res?.message || 'Data berhasil disinkronkan ulang dari Google Sheets.');
+        setTimeout(() => window.location.reload(), 1000);
       } catch (err: any) {
-        toastError('Gagal Reset', err.message);
+        toastError('Gagal Sinkronisasi', err.message);
+      } finally {
+        setSyncing(false);
       }
     }
   };
@@ -424,10 +427,11 @@ export const SettingsView: React.FC = () => {
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
           <button
             onClick={handleResetData}
-            className="text-xs text-slate-500 hover:text-rose-600 flex items-center gap-1.5 font-medium transition-colors"
+            disabled={syncing}
+            className="text-xs text-slate-500 hover:text-emerald-700 flex items-center gap-1.5 font-medium transition-colors disabled:opacity-50"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Data Contoh (Demo)</span>
+            <RotateCcw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            <span>{syncing ? 'Menyinkronkan...' : 'Bersihkan Cache & Sinkronkan Ulang dari Google Sheets'}</span>
           </button>
 
           <button

@@ -102,8 +102,11 @@ export function createApp() {
   // ==========================================
   // DASHBOARD API
   // ==========================================
-  app.get('/api/dashboard', (req: Request, res: Response) => {
+  app.get('/api/dashboard', async (req: Request, res: Response) => {
     try {
+      if (req.query.fresh === 'true' || req.query.refresh === 'true') {
+        await db.syncFromGas().catch(() => {});
+      }
       const dashboard = db.getDashboard();
       res.json({ success: true, data: dashboard });
     } catch (err: any) {
@@ -117,8 +120,11 @@ export function createApp() {
   // ==========================================
   // STUDENTS CRUD API
   // ==========================================
-  app.get('/api/students', (req: Request, res: Response) => {
+  app.get('/api/students', async (req: Request, res: Response) => {
     try {
+      if (req.query.fresh === 'true' || req.query.refresh === 'true') {
+        await db.syncFromGas().catch(() => {});
+      }
       const status = req.query.status as 'ALL' | 'ACTIVE' | 'INACTIVE' | undefined;
       const search = req.query.search as string | undefined;
       const students = db.getStudents(status || 'ALL', search);
@@ -408,9 +414,17 @@ export function createApp() {
     }
   });
 
-  app.post('/api/database/reset', (req: Request, res: Response) => {
+  app.post('/api/database/reset', async (req: Request, res: Response) => {
     db.resetToDefault();
-    res.json({ success: true, data: { message: 'Data contoh berhasil di-reset.' } });
+    const syncRes = await db.syncFromGas();
+    res.json({ 
+      success: true, 
+      data: { 
+        message: syncRes.success 
+          ? `Data lokal dibersihkan & berhasil disinkronkan ulang dengan Google Sheets.` 
+          : 'Data lokal dibersihkan.' 
+      } 
+    });
   });
 
   app.post('/api/sync/gas', async (req: Request, res: Response) => {

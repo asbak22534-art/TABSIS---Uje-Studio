@@ -37,16 +37,16 @@ if (!fs.existsSync(DATA_DIR)) {
 
 // Initial default settings
 const defaultSettings: AppSettings = {
-  school_name: 'SD Negeri 01 Teladan',
+  school_name: 'MI Islam Terpadu Al-Uswah Pasirian',
   school_logo: '',
   academic_year: '2026/2027',
   currency: 'IDR',
   minimum_deposit: 1000,
   maximum_deposit: 5000000,
   maximum_withdrawal: 5000000,
-  class_id: '5A',
-  class_name: 'Kelas 5A',
-  teacher_name: 'Ibu Siti Rahmawati, S.Pd.',
+  class_id: '5C',
+  class_name: '5C',
+  teacher_name: 'Jefri Eka Anggara Putra, S.Pd',
   gas_script_url: 'https://script.google.com/macros/s/AKfycbw098797ZSZS8NTg_Ksez8CGBNwDbsq2uody9RBJTN9pIorj4kAFrJ7-HIc8ccMDxEstw/exec'
 };
 
@@ -54,304 +54,49 @@ const defaultSettings: AppSettings = {
 const defaultUsers: User[] = [
   {
     user_id: 'USR-001',
-    username: 'walikelas',
-    name: 'Ibu Siti Rahmawati, S.Pd.',
-    password_hash: 'guru123', // Demo teacher credentials
-    class_id: '5A',
+    username: 'uje',
+    name: 'Jefri Eka Anggara Putra, S.Pd',
+    password_hash: 'uje321',
+    class_id: '5C',
     status: 'ACTIVE',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }
 ];
 
-// Initial realistic students for Class 5A (NISN, Nama, Jenis Kelamin, Kelas, No HP Wali)
-const initialStudents: Student[] = [
-  {
-    student_id: '0123456781',
-    nisn: '0123456781',
-    nama: 'Ahmad Fauzan Pratama',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '081234567890',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456782',
-    nisn: '0123456782',
-    nama: 'Siti Nurhaliza',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '081298765432',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456783',
-    nisn: '0123456783',
-    nama: 'Budi Santoso',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '081345678901',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456784',
-    nisn: '0123456784',
-    nama: 'Dewi Lestari',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '081387654321',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456785',
-    nisn: '0123456785',
-    nama: 'Rizky Alamsyah',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '081512345678',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456786',
-    nisn: '0123456786',
-    nama: 'Anindya Putri Kirana',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '081798765432',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456787',
-    nisn: '0123456787',
-    nama: 'Fajar Nugraha',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '081823456789',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456788',
-    nisn: '0123456788',
-    nama: 'Nabila Zahra',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '081934567890',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456789',
-    nisn: '0123456789',
-    nama: 'Dimas Arya Saputra',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '082145678901',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456790',
-    nisn: '0123456790',
-    nama: 'Zalfa Kayla Jasmine',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '082256789012',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456791',
-    nisn: '0123456791',
-    nama: 'Farhan Maulana',
-    jenis_kelamin: 'L',
-    kelas: '5A',
-    no_hp_wali: '082367890123',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  },
-  {
-    student_id: '0123456792',
-    nisn: '0123456792',
-    nama: 'Cantika Maharani',
-    jenis_kelamin: 'P',
-    kelas: '5A',
-    no_hp_wali: '085678901234',
-    status: 'ACTIVE',
-    created_at: '2026-07-15T08:00:00.000Z',
-    updated_at: '2026-07-15T08:00:00.000Z'
-  }
-];
-
-// Initial realistic transactions matching user examples
-const initialTransactions: Transaction[] = [
-  // Ahmad Fauzan transactions
-  {
-    transaction_id: 'TRX-20260801-001',
-    student_id: '0123456781',
-    transaction_type: 'SETORAN',
-    amount: 100000,
-    transaction_date: '2026-08-01',
-    description: 'Setoran awal semester',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-01T08:15:00.000Z',
-    updated_at: '2026-08-01T08:15:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260805-002',
-    student_id: '0123456781',
-    transaction_type: 'SETORAN',
-    amount: 50000,
-    transaction_date: '2026-08-05',
-    description: 'Tabungan mingguan',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-05T08:20:00.000Z',
-    updated_at: '2026-08-05T08:20:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260810-003',
-    student_id: '0123456781',
-    transaction_type: 'PENARIKAN',
-    amount: 20000,
-    transaction_date: '2026-08-10',
-    description: 'Beli buku tulis & pensil warna',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-10T09:10:00.000Z',
-    updated_at: '2026-08-10T09:10:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260815-004',
-    student_id: '0123456781',
-    transaction_type: 'SETORAN',
-    amount: 25000,
-    transaction_date: '2026-08-15',
-    description: 'Sisa uang saku',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-15T08:05:00.000Z',
-    updated_at: '2026-08-15T08:05:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260817-005',
-    student_id: '0123456781',
-    transaction_type: 'SETORAN',
-    amount: 50000,
-    transaction_date: '2026-08-17',
-    description: 'Tabungan hari kemerdekaan',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-17T07:45:00.000Z',
-    updated_at: '2026-08-17T07:45:00.000Z',
-    status: 'ACTIVE'
-  },
-
-  // Siti Nurhaliza
-  {
-    transaction_id: 'TRX-20260802-006',
-    student_id: '0123456782',
-    transaction_type: 'SETORAN',
-    amount: 150000,
-    transaction_date: '2026-08-02',
-    description: 'Tabungan awal bulan',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-02T08:00:00.000Z',
-    updated_at: '2026-08-02T08:00:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260817-007',
-    student_id: '0123456782',
-    transaction_type: 'SETORAN',
-    amount: 20000,
-    transaction_date: '2026-08-17',
-    description: 'Tabungan rutin',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-17T08:10:00.000Z',
-    updated_at: '2026-08-17T08:10:00.000Z',
-    status: 'ACTIVE'
-  },
-
-  // Budi Santoso
-  {
-    transaction_id: 'TRX-20260803-008',
-    student_id: '0123456783',
-    transaction_type: 'SETORAN',
-    amount: 75000,
-    transaction_date: '2026-08-03',
-    description: 'Setoran tabungan',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-03T08:30:00.000Z',
-    updated_at: '2026-08-03T08:30:00.000Z',
-    status: 'ACTIVE'
-  },
-  {
-    transaction_id: 'TRX-20260817-009',
-    student_id: '0123456783',
-    transaction_type: 'PENARIKAN',
-    amount: 25000,
-    transaction_date: '2026-08-17',
-    description: 'Keperluan seragam pramuka',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-17T08:35:00.000Z',
-    updated_at: '2026-08-17T08:35:00.000Z',
-    status: 'ACTIVE'
-  },
-
-  // Dewi Lestari
-  {
-    transaction_id: 'TRX-20260804-010',
-    student_id: '0123456784',
-    transaction_type: 'SETORAN',
-    amount: 200000,
-    transaction_date: '2026-08-04',
-    description: 'Tabungan bulanan',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-04T09:00:00.000Z',
-    updated_at: '2026-08-04T09:00:00.000Z',
-    status: 'ACTIVE'
-  },
-
-  // Rizky Alamsyah
-  {
-    transaction_id: 'TRX-20260806-011',
-    student_id: '0123456785',
-    transaction_type: 'SETORAN',
-    amount: 80000,
-    transaction_date: '2026-08-06',
-    description: 'Setoran pertama',
-    created_by: 'Ibu Siti Rahmawati, S.Pd.',
-    created_at: '2026-08-06T08:15:00.000Z',
-    updated_at: '2026-08-06T08:15:00.000Z',
-    status: 'ACTIVE'
-  }
-];
+// Clean empty initial state (no mock data, 100% sourced from Google Sheets)
+const initialStudents: Student[] = [];
+const initialTransactions: Transaction[] = [];
 
 class DatabaseManager {
   private memoryData: DatabaseSchema;
   private isWriting = false;
   private lockQueue: Array<() => void> = [];
+  private syncTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.memoryData = this.loadData();
+    // Automatically perform initial sync with Google Sheets on startup
+    this.initRealtimeSync();
+  }
+
+  private initRealtimeSync(): void {
+    if (this.memoryData.settings.gas_script_url) {
+      setTimeout(() => {
+        this.syncFromGas().catch((err) => {
+          console.warn('Initial background sync from Google Sheets notice:', err.message);
+        });
+      }, 1000);
+
+      // Periodic background polling (every 45s) to guarantee real-time sync with Google Sheets
+      if (!this.syncTimer) {
+        this.syncTimer = setInterval(() => {
+          if (this.memoryData.settings.gas_script_url && !this.isWriting) {
+            this.syncFromGas().catch(() => {});
+          }
+        }, 45000);
+      }
+    }
   }
 
   private loadData(): DatabaseSchema {

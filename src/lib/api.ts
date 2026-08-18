@@ -368,9 +368,10 @@ class ApiService {
     return { message: msg };
   }
 
-  public async resetDemoData(): Promise<void> {
-    await this.request('/api/database/reset', { method: 'POST' });
+  public async resetDemoData(): Promise<{ message?: string }> {
+    const res = await this.request<{ message?: string }>('/api/database/reset', { method: 'POST' });
     this.clearCache();
+    return res;
   }
 
   public async getGasScript(): Promise<string> {
