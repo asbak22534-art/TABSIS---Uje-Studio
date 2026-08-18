@@ -328,7 +328,7 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
         /* TRANSACTION FORM */
         <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200/90 shadow-sm">
           {/* Type Toggle: SETORAN vs PENARIKAN */}
-          <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-5">
+          <div className="grid grid-cols-2 bg-slate-100/90 p-1.5 rounded-2xl mb-5 border border-slate-200/70 gap-1.5">
             <button
               type="button"
               id="type-toggle-setoran"
@@ -336,14 +336,24 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                 setType('SETORAN');
                 setErrorMessage('');
               }}
-              className={`flex-1 py-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all duration-150 ${
+              className={`py-2.5 sm:py-3 px-2 sm:px-4 rounded-xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2.5 transition-all duration-150 cursor-pointer active:scale-[0.98] select-none ${
                 type === 'SETORAN'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25 ring-1 ring-emerald-700/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
               }`}
             >
-              <ArrowDownRight className="w-4 h-4" />
-              <span>+ SETORAN TABUNGAN</span>
+              <div
+                className={`w-6 h-6 sm:w-6.5 sm:h-6.5 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                  type === 'SETORAN'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-emerald-100/80 text-emerald-700'
+                }`}
+              >
+                <ArrowDownRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
+              </div>
+              <span className="truncate whitespace-nowrap">
+                Setoran <span className="hidden sm:inline">Tabungan</span>
+              </span>
             </button>
 
             <button
@@ -353,14 +363,24 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                 setType('PENARIKAN');
                 setErrorMessage('');
               }}
-              className={`flex-1 py-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all duration-150 ${
+              className={`py-2.5 sm:py-3 px-2 sm:px-4 rounded-xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2.5 transition-all duration-150 cursor-pointer active:scale-[0.98] select-none ${
                 type === 'PENARIKAN'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/25 ring-1 ring-amber-700/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
               }`}
             >
-              <ArrowUpRight className="w-4 h-4" />
-              <span>- PENARIKAN TABUNGAN</span>
+              <div
+                className={`w-6 h-6 sm:w-6.5 sm:h-6.5 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                  type === 'PENARIKAN'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-amber-100/80 text-amber-700'
+                }`}
+              >
+                <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
+              </div>
+              <span className="truncate whitespace-nowrap">
+                Penarikan <span className="hidden sm:inline">Tabungan</span>
+              </span>
             </button>
           </div>
 
