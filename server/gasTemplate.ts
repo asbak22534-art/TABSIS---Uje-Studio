@@ -156,7 +156,7 @@ function initDatabase() {
   var sheetUsers = getOrCreateSheet(ss, SHEET_USERS);
   if (sheetUsers.getLastRow() === 0) {
     sheetUsers.appendRow(['user_id', 'username', 'name', 'password_hash', 'class_id', 'status', 'created_at', 'updated_at']);
-    sheetUsers.appendRow(['USR-001', 'walikelas', 'Wali Kelas', 'guru123', '5A', 'ACTIVE', new Date().toISOString(), new Date().toISOString()]);
+    sheetUsers.appendRow(['USR-001', 'uje', 'Jefri Eka Anggara Putra, S.Pd', 'uje321', '5C', 'ACTIVE', new Date().toISOString(), new Date().toISOString()]);
   }
 
   // 2. Sheet STUDENTS (NISN, Nama, Jenis Kelamin, Kelas, No HP Wali)
@@ -175,9 +175,9 @@ function initDatabase() {
   var sheetSettings = getOrCreateSheet(ss, SHEET_SETTINGS);
   if (sheetSettings.getLastRow() === 0) {
     sheetSettings.appendRow(['setting_key', 'setting_value']);
-    sheetSettings.appendRow(['school_name', 'SD Negeri 01 Teladan']);
-    sheetSettings.appendRow(['class_name', 'Kelas 5A']);
-    sheetSettings.appendRow(['teacher_name', 'Wali Kelas']);
+    sheetSettings.appendRow(['school_name', 'MI Islam Terpadu Al-Uswah Pasirian']);
+    sheetSettings.appendRow(['class_name', '5C']);
+    sheetSettings.appendRow(['teacher_name', 'Jefri Eka Anggara Putra, S.Pd']);
     sheetSettings.appendRow(['academic_year', '2026/2027']);
     sheetSettings.appendRow(['minimum_deposit', '1000']);
   }
@@ -216,7 +216,7 @@ function loginUser(username, password) {
     var rUsername = String(row[1] || '').trim().toLowerCase();
     var rName = String(row[2] || 'Wali Kelas');
     var rPasswordHash = String(row[3] || '').trim();
-    var rClassId = String(row[4] || '5A');
+    var rClassId = String(row[4] || '5C');
     var rStatus = String(row[5] || 'ACTIVE').toUpperCase();
 
     if (rUsername === cleanUsername && rStatus === 'ACTIVE') {

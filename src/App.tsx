@@ -82,8 +82,8 @@ const MainAppContent: React.FC = () => {
               setOpenAddStudentDirectly(false);
               setCurrentTab(tab);
             }}
-            classNameTitle={settings?.class_name || 'Kelas 5A'}
-            schoolName={settings?.school_name || 'SD Negeri 01 Teladan'}
+            classNameTitle={settings?.class_name ? `Kelas ${settings.class_name}` : 'Kelas 5C'}
+            schoolName={settings?.school_name || 'MI Islam Terpadu Al-Uswah Pasirian'}
           />
 
           {/* Main Container */}

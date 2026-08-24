@@ -171,7 +171,7 @@ export function createApp() {
         nisn: String(nisn).trim(),
         nama: String(nama).trim(),
         jenis_kelamin: jenis_kelamin === 'P' ? 'P' : 'L',
-        kelas: String(kelas || '5A').trim(),
+        kelas: String(kelas || '5C').trim(),
         no_hp_wali: String(no_hp_wali || '').trim(),
         status: 'ACTIVE'
       });

@@ -230,8 +230,19 @@ class DatabaseManager {
   public async loginUser(username: string, passwordPlain: string): Promise<{ session: SessionData; user: User } | null> {
     const cleanUsername = username.trim().toLowerCase();
     const cleanPassword = passwordPlain.trim();
+    const gasUrl = this.memoryData.settings.gas_script_url;
 
-    // 1. Try local memory match first
+    // 1. If Google Apps Script is configured, trigger a real-time sync first
+    // so credentials & student/transaction records are guaranteed to be from Google Sheets
+    if (gasUrl && gasUrl.startsWith('http')) {
+      try {
+        await this.syncFromGas().catch(() => {});
+      } catch (err) {
+        console.warn('Real-time sync on login notice:', err);
+      }
+    }
+
+    // 2. Try local memory match (which has been synced from Google Sheets)
     const localUser = this.memoryData.users.find(
       (u) => u.username.toLowerCase() === cleanUsername && u.status === 'ACTIVE'
     );
@@ -240,11 +251,9 @@ class DatabaseManager {
       return this.createSession(localUser);
     }
 
-    // 2. If no local match or password mismatch, and Google Apps Script is configured:
-    const gasUrl = this.memoryData.settings.gas_script_url;
+    // 3. Direct Google Apps Script login action fallback
     if (gasUrl && gasUrl.startsWith('http')) {
       try {
-        // First try dedicated login action
         const gasLoginRes = await fetch(gasUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -263,9 +272,9 @@ class DatabaseManager {
             const syncedUser: User = {
               user_id: gasUser.user_id || `USR-${Date.now()}`,
               username: gasUser.username || username.trim(),
-              name: gasUser.name || 'Wali Kelas',
+              name: gasUser.name || 'Jefri Eka Anggara Putra, S.Pd',
               password_hash: cleanPassword,
-              class_id: gasUser.class_id || '5A',
+              class_id: gasUser.class_id || '5C',
               status: 'ACTIVE',
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
@@ -281,54 +290,14 @@ class DatabaseManager {
             }
             this.persist();
 
+            // Run full sync to populate students and transactions immediately
+            await this.syncFromGas().catch(() => {});
+
             return this.createSession(syncedUser);
           }
         }
       } catch (err) {
         console.error('GAS direct login error:', err);
-      }
-
-      // Fallback: fetch all users from Google Sheets USERS table
-      try {
-        const usersRes = await fetch(`${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=getUsers`, {
-          redirect: 'follow'
-        });
-        if (usersRes.ok) {
-          const usersJson = (await usersRes.json()) as any;
-          if (usersJson && usersJson.success && Array.isArray(usersJson.data)) {
-            for (const u of usersJson.data) {
-              const idx = this.memoryData.users.findIndex(
-                (x) => x.username.toLowerCase() === String(u.username).toLowerCase()
-              );
-              const formattedUser: User = {
-                user_id: String(u.user_id || `USR-${Date.now()}`),
-                username: String(u.username),
-                name: String(u.name || 'Wali Kelas'),
-                password_hash: String(u.password_hash),
-                class_id: String(u.class_id || '5A'),
-                status: (String(u.status || 'ACTIVE').toUpperCase() as any),
-                created_at: u.created_at || new Date().toISOString(),
-                updated_at: u.updated_at || new Date().toISOString()
-              };
-
-              if (idx >= 0) {
-                this.memoryData.users[idx] = formattedUser;
-              } else {
-                this.memoryData.users.push(formattedUser);
-              }
-            }
-            this.persist();
-
-            const foundAfterSync = this.memoryData.users.find(
-              (u) => u.username.toLowerCase() === cleanUsername && u.status === 'ACTIVE'
-            );
-            if (foundAfterSync && foundAfterSync.password_hash === cleanPassword) {
-              return this.createSession(foundAfterSync);
-            }
-          }
-        }
-      } catch (syncErr) {
-        console.error('GAS users sync fallback error:', syncErr);
       }
     }
 
@@ -944,9 +913,9 @@ class DatabaseManager {
         this.memoryData.users = users.map((u: any, idx: number) => ({
           user_id: String(u.user_id || `USR-00${idx + 1}`),
           username: String(u.username || '').trim(),
-          name: String(u.name || 'Wali Kelas'),
+          name: String(u.name || 'Jefri Eka Anggara Putra, S.Pd'),
           password_hash: String(u.password_hash || ''),
-          class_id: String(u.class_id || '5A'),
+          class_id: String(u.class_id || '5C'),
           status: (String(u.status || 'ACTIVE').toUpperCase() as any),
           created_at: u.created_at || new Date().toISOString(),
           updated_at: u.updated_at || new Date().toISOString()
@@ -962,7 +931,7 @@ class DatabaseManager {
             nisn: nisnVal,
             nama: String(st.nama || '').trim(),
             jenis_kelamin: (String(st.jenis_kelamin || 'L').toUpperCase() === 'P' ? 'P' : 'L') as any,
-            kelas: String(st.kelas || '5A').trim(),
+            kelas: String(st.kelas || '5C').trim(),
             no_hp_wali: String(st.no_hp_wali || '').trim(),
             status: (String(st.status || 'ACTIVE').toUpperCase() as any),
             created_at: st.created_at || new Date().toISOString(),

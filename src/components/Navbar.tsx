@@ -13,8 +13,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   currentTab,
   onSelectTab,
-  classNameTitle = 'Kelas 5A',
-  schoolName = 'SD Negeri 01 Teladan'
+  classNameTitle = 'Kelas 5C',
+  schoolName = 'MI Islam Terpadu Al-Uswah Pasirian'
 }) => {
   const { user, logout } = useAuth();
 
