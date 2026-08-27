@@ -13,10 +13,10 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   currentTab,
   onSelectTab,
-  classNameTitle = 'Kelas 5C',
+  classNameTitle = 'Kelas',
   schoolName = 'MI Islam Terpadu Al-Uswah Pasirian'
 }) => {
-  const { user, logout } = useAuth();
+  const { logout, activeAcademicYear, allowedAcademicYears, setActiveAcademicYear, activeClassId, allowedClassIds, setActiveClass } = useAuth();
 
   const navItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Beranda', icon: <Home className="w-5 h-5" /> },
@@ -28,38 +28,60 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      {/* Top Header for Mobile and Desktop */}
+      {/* Top Header for Mobile, Tablet, and Desktop */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 md:h-18 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 md:w-11 md:h-11 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 flex items-center justify-center text-white shadow-xs shrink-0 ring-1 ring-emerald-900/10">
-              <Wallet className="w-5 h-5 md:w-5.5 md:h-5.5" />
+        <div className="max-w-5xl mx-auto px-3 xs:px-4 sm:px-6 h-14 xs:h-16 md:h-18 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 xs:gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-8.5 h-8.5 xs:w-9.5 xs:h-9.5 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 flex items-center justify-center text-white shadow-xs shrink-0 ring-1 ring-emerald-900/10">
+              <Wallet className="w-4.5 h-4.5 xs:w-5 xs:h-5 md:w-5.5 md:h-5.5" />
             </div>
-            <div>
-              <span className="font-extrabold text-slate-900 tracking-tight text-base md:text-lg block leading-none">
+            <div className="min-w-0 flex flex-col justify-center">
+              <span className="font-black text-slate-900 tracking-tight text-xs xs:text-sm sm:text-base md:text-lg block leading-tight truncate">
                 TABUNGAN SISWA
               </span>
-              <span className="text-[11px] font-medium text-emerald-800/80 hidden sm:inline-block mt-0.5">
-                {classNameTitle} • {schoolName}
+              <span className="text-[10px] xs:text-[11px] sm:text-xs font-medium text-emerald-800/80 block mt-0.5 truncate max-w-[150px] xs:max-w-[210px] sm:max-w-xs md:max-w-md lg:max-w-none">
+                <span className="font-semibold text-emerald-900">{classNameTitle}</span>
+                <span className="mx-1 opacity-60">•</span>
+                <span>{schoolName}</span>
               </span>
             </div>
           </div>
 
-          {/* Mobile Header Logout Button */}
-          <div className="flex md:hidden items-center gap-2">
+          {/* Mobile Year/Class Scope & Logout */}
+          <div className="flex md:hidden items-center gap-1.5 shrink-0">
+            {allowedAcademicYears.length > 1 && (
+              <select aria-label="Pilih tahun pelajaran" value={activeAcademicYear || ''} onChange={(e) => setActiveAcademicYear(e.target.value)} className="max-w-[92px] px-1.5 py-1.5 rounded-xl border border-slate-200 bg-white text-[10px] font-bold text-emerald-800 outline-none">
+                {allowedAcademicYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            )}
+            {allowedClassIds.length > 0 && (
+              <select aria-label="Pilih kelas aktif" value={activeClassId || ''} onChange={(e) => setActiveClass(e.target.value)} className="max-w-[72px] px-1.5 py-1.5 rounded-xl border border-slate-200 bg-white text-[10px] font-bold text-emerald-800 outline-none">
+                {allowedClassIds.map((classId) => <option key={classId} value={classId}>{classId}</option>)}
+              </select>
+            )}
             <button
               id="logout-btn-mobile-header"
               onClick={logout}
               title="Keluar dari Akun"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 text-xs font-bold transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 px-2 xs:px-2.5 py-1.5 rounded-xl text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 text-[11px] xs:text-xs font-bold transition-all active:scale-95 cursor-pointer"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Keluar</span>
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden xs:inline">Keluar</span>
             </button>
           </div>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1.5">
+          {/* Desktop & Tablet Navigation Links */}
+          <nav className="hidden md:flex items-center gap-1 lg:gap-1.5 shrink-0">
+            {allowedAcademicYears.length > 1 && (
+              <select aria-label="Pilih tahun pelajaran" value={activeAcademicYear || ''} onChange={(e) => setActiveAcademicYear(e.target.value)} className="px-2.5 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-800 outline-none cursor-pointer">
+                {allowedAcademicYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            )}
+            {allowedClassIds.length > 0 && (
+              <select aria-label="Pilih kelas aktif" value={activeClassId || ''} onChange={(e) => setActiveClass(e.target.value)} className="mr-1 px-2.5 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-800 outline-none cursor-pointer">
+                {allowedClassIds.map((classId) => <option key={classId} value={classId}>{`Kelas ${classId}`}</option>)}
+              </select>
+            )}
             {navItems.map((item) => {
               const active = currentTab === item.id;
               return (
@@ -67,28 +89,28 @@ export const Navbar: React.FC<NavbarProps> = ({
                   key={item.id}
                   id={`nav-desktop-${item.id}`}
                   onClick={() => onSelectTab(item.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 ${
+                  className={`flex items-center gap-1.5 lg:gap-2 px-2.5 lg:px-3.5 py-1.5 lg:py-2 rounded-xl text-xs lg:text-sm font-semibold transition-all duration-150 ${
                     active
                       ? 'bg-emerald-600 text-white shadow-xs shadow-emerald-600/20'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  {item.icon}
+                  <span className="shrink-0">{item.icon}</span>
                   <span>{item.label}</span>
                 </button>
               );
             })}
 
-            <div className="h-6 w-px bg-slate-200 mx-1" />
+            <div className="h-6 w-px bg-slate-200 mx-0.5 lg:mx-1" />
 
             <button
               id="logout-btn-desktop"
               onClick={logout}
-              title="Keluar"
-              className="flex items-center gap-1.5 px-3 py-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl text-sm font-medium transition-colors"
+              title="Keluar dari Akun"
+              className="flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 lg:py-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl text-xs lg:text-sm font-semibold transition-colors cursor-pointer"
             >
-              <LogOut className="w-4 h-4" />
-              <span className="text-xs font-semibold">Keluar</span>
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span>Keluar</span>
             </button>
           </nav>
         </div>

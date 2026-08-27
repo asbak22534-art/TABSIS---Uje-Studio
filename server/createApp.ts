@@ -1,447 +1,231 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { db } from './db.js';
-import { generateGoogleAppsScriptCode } from './gasTemplate.js';
+import { db } from './db';
+import { GAS_SCRIPT_CODE } from './gasTemplate';
+import type { User } from '../src/types';
+import {
+  CONFIG,
+  parseCookies,
+  verifySignedSessionToken,
+  getSessionCookieOptions,
+  securityHeadersMiddleware,
+  sameOriginProtection,
+  loginRateLimiter,
+  mutationRateLimiter,
+  syncRateLimiter
+} from './security';
+
+declare global {
+  namespace Express {
+    interface Request { user?: User; }
+  }
+}
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', CONFIG.TRUST_PROXY ? 1 : false);
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+  app.use(securityHeadersMiddleware);
+  app.use(sameOriginProtection);
 
-  // JSON Body parsing
-  app.use(express.json());
-
-  // Simple Auth Middleware
-  const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return next();
-    }
-    const token = authHeader.substring(7);
-    const user = db.validateSession(token);
-    if (user) {
-      (req as any).user = user;
-    }
-    next();
+  const clearSessionCookie = (req: Request, res: Response) => {
+    const opts = getSessionCookieOptions(req);
+    res.setHeader('Set-Cookie', `tabungan_session=; HttpOnly; Path=/; SameSite=${opts.sameSite}; Max-Age=0${opts.secure ? '; Secure' : ''}${opts.partitioned ? '; Partitioned' : ''}`);
   };
 
-  app.use(authMiddleware);
-
-  // ==========================================
-  // AUTH API
-  // ==========================================
-  app.post('/api/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_CREDENTIAL', message: 'Username dan kata sandi harus diisi.' }
-      });
-    }
-
-    const authResult = await db.loginUser(username, password);
-    if (!authResult) {
-      return res.status(401).json({
-        success: false,
-        error: { code: 'INVALID_CREDENTIAL', message: 'Username atau kata sandi wali kelas salah.' }
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        token: authResult.session.session_id,
-        user: {
-          user_id: authResult.user.user_id,
-          username: authResult.user.username,
-          name: authResult.user.name,
-          class_id: authResult.user.class_id
-        },
-        expires_at: authResult.session.expires_at
-      }
-    });
-  });
-
-  app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const getAuthTokenFromReq = (req: Request): string | null => {
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      db.logoutSession(token);
+    if (authHeader && typeof authHeader === 'string') {
+      const match = authHeader.match(/^Bearer\s+(.+)$/i);
+      if (match && match[1]) return decodeURIComponent(match[1].trim());
     }
-    res.json({ success: true, message: 'Berhasil keluar.' });
-  });
+    const cookieToken = parseCookies(req.headers.cookie)['tabungan_session'];
+    if (cookieToken) return cookieToken;
+    return null;
+  };
 
-  app.get('/api/auth/validate-session', (req: Request, res: Response) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        error: { code: 'AUTH_REQUIRED', message: 'Sesi tidak ditemukan. Silakan login kembali.' }
-      });
-    }
-
-    const token = authHeader.substring(7);
-    const user = db.validateSession(token);
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: { code: 'SESSION_EXPIRED', message: 'Sesi Anda telah kedaluwarsa.' }
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        user: {
-          user_id: user.user_id,
-          username: user.username,
-          name: user.name,
-          class_id: user.class_id
-        }
-      }
-    });
-  });
-
-  // ==========================================
-  // DASHBOARD API
-  // ==========================================
-  app.get('/api/dashboard', async (req: Request, res: Response) => {
+  const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (req.query.fresh === 'true' || req.query.refresh === 'true') {
-        await db.syncFromGas().catch(() => {});
+      const token = getAuthTokenFromReq(req);
+      if (!token) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Sesi login tidak ditemukan. Silakan login kembali.' } });
+      const decoded = verifySignedSessionToken(token);
+      if (!decoded) {
+        clearSessionCookie(req, res);
+        return res.status(401).json({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sesi login tidak valid atau telah berakhir.' } });
       }
-      const dashboard = db.getDashboard();
-      res.json({ success: true, data: dashboard });
+      const requestedYear = typeof req.headers['x-academic-year'] === 'string' ? req.headers['x-academic-year'].trim() : '';
+      const requestedClass = typeof req.headers['x-class-id'] === 'string' ? req.headers['x-class-id'].trim() : '';
+      req.user = await db.getSessionUser(decoded, requestedYear, requestedClass);
+      next();
     } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: err.message || 'Gagal memuat data dashboard.' }
-      });
+      const code = String(err?.message || '').startsWith('SESSION_') ? 'SESSION_CHANGED' : 'AUTH_SCOPE_ERROR';
+      if (code === 'SESSION_CHANGED') clearSessionCookie(req, res);
+      return res.status(code === 'SESSION_CHANGED' ? 401 : 503).json({ success: false, error: { code, message: err.message || 'Gagal memuat lingkup akses.' } });
     }
-  });
+  };
 
-  // ==========================================
-  // STUDENTS CRUD API
-  // ==========================================
-  app.get('/api/students', async (req: Request, res: Response) => {
+  const requireActiveClass = (req: Request, res: Response): boolean => {
+    if (!req.user?.active_class_section_id) {
+      res.status(409).json({ success: false, error: { code: 'NO_CLASS_ASSIGNMENT', message: 'Akun guru belum ditugaskan ke kelas atau belum ada kelas aktif. Hubungi penanggung jawab spreadsheet untuk mengisi TEACHER_ASSIGNMENTS.' } });
+      return false;
+    }
+    return true;
+  };
+
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'Tabungan Siswa Backend API', version: '5.0.0-multirole', environment: CONFIG.NODE_ENV, timestamp: new Date().toISOString() }));
+
+  app.post('/api/auth/login', loginRateLimiter, async (req, res) => {
     try {
-      if (req.query.fresh === 'true' || req.query.refresh === 'true') {
-        await db.syncFromGas().catch(() => {});
-      }
-      const status = req.query.status as 'ALL' | 'ACTIVE' | 'INACTIVE' | undefined;
-      const search = req.query.search as string | undefined;
-      const students = db.getStudents(status || 'ALL', search);
-      res.json({ success: true, data: students });
+      const { username, password } = req.body || {};
+      const { user, signedToken } = await db.loginUser(username, password);
+      const opts = getSessionCookieOptions(req);
+      const parts = [`tabungan_session=${encodeURIComponent(signedToken)}`, 'HttpOnly', 'Path=/', `SameSite=${opts.sameSite}`, `Max-Age=${CONFIG.SESSION_TTL_SECONDS}`];
+      if (opts.secure) parts.push('Secure');
+      if (opts.partitioned) parts.push('Partitioned');
+      res.setHeader('Set-Cookie', parts.join('; '));
+      return res.json({ success: true, data: { user, token: signedToken } });
     } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal memuat data siswa.' }
-      });
+      const message = CONFIG.NODE_ENV === 'production' ? 'Username atau password salah.' : (err.message || 'Username atau password salah.');
+      return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message } });
     }
   });
 
-  app.get('/api/students/:id', (req: Request, res: Response) => {
-    const student = db.getStudentById(req.params.id);
-    if (!student) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 'STUDENT_NOT_FOUND', message: 'Data siswa tidak ditemukan.' }
-      });
-    }
-    res.json({ success: true, data: student });
+  app.post('/api/auth/logout', (req, res) => {
+    clearSessionCookie(req, res);
+    return res.json({ success: true, data: { message: 'Berhasil logout.' } });
   });
 
-  app.post('/api/students', (req: Request, res: Response) => {
+  app.post('/api/auth/change-password', requireAuth, mutationRateLimiter, async (req, res) => {
     try {
-      const { nisn, nama, jenis_kelamin, kelas, no_hp_wali } = req.body;
-      if (!nama || !nisn) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_DATA', message: 'Nama dan NISN siswa wajib diisi.' }
-        });
-      }
-
-      // Check NISN duplicate
-      const existing = db.getStudents('ALL').find((s) => (s.nisn || s.student_id) === String(nisn).trim());
-      if (existing) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'DUPLICATE_NISN', message: `NISN ${nisn} sudah digunakan oleh siswa ${existing.nama}.` }
-        });
-      }
-
-      const newStudent = db.createStudent({
-        nisn: String(nisn).trim(),
-        nama: String(nama).trim(),
-        jenis_kelamin: jenis_kelamin === 'P' ? 'P' : 'L',
-        kelas: String(kelas || '5C').trim(),
-        no_hp_wali: String(no_hp_wali || '').trim(),
-        status: 'ACTIVE'
-      });
-
-      res.status(201).json({ success: true, data: newStudent });
+      const { oldPassword, newPassword } = req.body || {};
+      const result = await db.changePassword(req.user!.user_id, oldPassword, newPassword);
+      return res.json({ success: true, data: result });
     } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: err.message || 'Gagal menambahkan siswa.' }
-      });
+      return res.status(400).json({ success: false, error: { code: 'CHANGE_PASSWORD_ERROR', message: err.message } });
     }
   });
 
-  app.put('/api/students/:id', (req: Request, res: Response) => {
+  app.get('/api/bootstrap', requireAuth, async (req, res) => {
+    const start = performance.now();
     try {
-      const updated = db.updateStudent(req.params.id, req.body);
-      if (!updated) {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'STUDENT_NOT_FOUND', message: 'Data siswa tidak ditemukan.' }
-        });
-      }
-      res.json({ success: true, data: updated });
+      const data = await db.getBootstrapData(req.user!);
+      const duration = Math.round(performance.now() - start);
+      res.setHeader('Server-Timing', `bootstrap;dur=${duration}`);
+      return res.json({ success: true, data: { ...data, serverTimingMs: duration } });
     } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal memperbarui data siswa.' }
-      });
+      return res.status(503).json({ success: false, error: { code: 'BOOTSTRAP_ERROR', message: err.message || 'Gagal memuat bootstrap aplikasi.' } });
     }
   });
 
-  app.delete('/api/students/:id', (req: Request, res: Response) => {
+  app.get('/api/auth/session', requireAuth, (req, res) => res.json({ success: true, data: { user: req.user } }));
+  app.get('/api/access/profile', requireAuth, async (req, res) => {
+    try { return res.json({ success: true, data: await db.getAccessProfile(req.user!.user_id, req.user!.role) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'ACCESS_PROFILE_ERROR', message: err.message } }); }
+  });
+
+  app.get('/api/summary', requireAuth, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; return res.json({ success: true, data: await db.getDashboardSummary(req.user!) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'SUMMARY_ERROR', message: err.message } }); }
+  });
+
+  app.get('/api/students', requireAuth, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; return res.json({ success: true, data: await db.getStudents(req.user!) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'STUDENTS_FETCH_ERROR', message: err.message } }); }
+  });
+
+  app.get('/api/students/:id', requireAuth, async (req, res) => {
     try {
-      const result = db.deleteOrDeactivateStudent(req.params.id);
-      if (!result.student && result.mode === 'DEACTIVATED') {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'STUDENT_NOT_FOUND', message: 'Data siswa tidak ditemukan.' }
-        });
-      }
-      res.json({
-        success: true,
-        data: {
-          mode: result.mode,
-          message: result.mode === 'DEACTIVATED'
-            ? 'Siswa dinonaktifkan karena memiliki riwayat transaksi (data finansial aman).'
-            : 'Siswa berhasil dihapus.'
-        }
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal memproses penghapusan siswa.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const s = await db.getStudentById(req.params.id, req.user!);
+      if (!s) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Siswa tidak ditemukan.' } });
+      return res.json({ success: true, data: s });
+    } catch (err: any) { return res.status(503).json({ success: false, error: { code: 'STUDENT_FETCH_ERROR', message: err.message } }); }
   });
 
-  // ==========================================
-  // TRANSACTIONS API (Financial Source of Truth)
-  // ==========================================
-  app.get('/api/transactions', (req: Request, res: Response) => {
+  app.post('/api/students', requireAuth, mutationRateLimiter, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; return res.json({ success: true, data: await db.createStudent(req.body, req.user!) }); }
+    catch (err: any) { return res.status(400).json({ success: false, error: { code: 'CREATE_STUDENT_ERROR', message: err.message } }); }
+  });
+
+  app.put('/api/students/:id', requireAuth, mutationRateLimiter, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; return res.json({ success: true, data: await db.updateStudent(req.params.id, req.body, req.user!) }); }
+    catch (err: any) { return res.status(400).json({ success: false, error: { code: 'UPDATE_STUDENT_ERROR', message: err.message } }); }
+  });
+
+  app.delete('/api/students/:id', requireAuth, mutationRateLimiter, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; await db.deleteStudent(req.params.id, req.user!); return res.json({ success: true, data: { message: 'Enrollment siswa pada kelas aktif dinonaktifkan.', mode: 'ENROLLMENT_DEACTIVATED' } }); }
+    catch (err: any) { return res.status(400).json({ success: false, error: { code: 'DELETE_STUDENT_ERROR', message: err.message } }); }
+  });
+
+  app.get('/api/transactions', requireAuth, async (req, res) => {
     try {
-      const { student_id, type, startDate, endDate, status, limit } = req.query;
-      const transactions = db.getTransactions({
-        student_id: student_id as string,
-        type: type as string,
-        startDate: startDate as string,
-        endDate: endDate as string,
-        status: status as string,
-        limit: limit ? parseInt(limit as string) : undefined
-      });
-      res.json({ success: true, data: transactions });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal memuat transaksi.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const studentId = typeof req.query.student_id === 'string' ? req.query.student_id : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+      return res.json({ success: true, data: await db.getTransactions(req.user!, { studentId, limit: isNaN(limit as any) ? undefined : limit, cursor }) });
+    } catch (err: any) { return res.status(503).json({ success: false, error: { code: 'TRANSACTIONS_FETCH_ERROR', message: err.message } }); }
   });
 
-  // DEPOSIT (Pessimistic transaction)
-  app.post('/api/transactions/deposit', async (req: Request, res: Response) => {
+  app.post('/api/transactions/deposit', requireAuth, mutationRateLimiter, async (req, res) => {
     try {
-      const { student_id, amount, description, transaction_date } = req.body;
-      if (!student_id || !amount || Number(amount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_AMOUNT', message: 'Nominal setoran harus lebih besar dari 0.' }
-        });
-      }
-
-      const result = await db.createDeposit({
-        student_id,
-        amount: Number(amount),
-        description,
-        transaction_date,
-        created_by: (req as any).user?.name
-      });
-
-      res.status(201).json({ success: true, data: result });
-    } catch (err: any) {
-      if (err.message === 'STUDENT_NOT_FOUND') {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'STUDENT_NOT_FOUND', message: 'Siswa tidak ditemukan.' }
-        });
-      }
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: err.message || 'Gagal memproses setoran.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const { student_id, amount, transaction_date, description } = req.body || {};
+      return res.json({ success: true, data: await db.createDeposit({ student_id, amount, transaction_date, description }, req.user!) });
+    } catch (err: any) { return res.status(400).json({ success: false, error: { code: 'DEPOSIT_ERROR', message: err.message } }); }
   });
 
-  // WITHDRAWAL (Strict balance check)
-  app.post('/api/transactions/withdraw', async (req: Request, res: Response) => {
+  app.post('/api/transactions/withdraw', requireAuth, mutationRateLimiter, async (req, res) => {
     try {
-      const { student_id, amount, description, transaction_date } = req.body;
-      if (!student_id || !amount || Number(amount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_AMOUNT', message: 'Nominal penarikan harus lebih besar dari 0.' }
-        });
-      }
-
-      const result = await db.createWithdrawal({
-        student_id,
-        amount: Number(amount),
-        description,
-        transaction_date,
-        created_by: (req as any).user?.name
-      });
-
-      res.status(201).json({ success: true, data: result });
-    } catch (err: any) {
-      if (err.message === 'INSUFFICIENT_BALANCE') {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: 'INSUFFICIENT_BALANCE',
-            message: 'Saldo tabungan siswa tidak mencukupi untuk melakukan penarikan ini.'
-          }
-        });
-      }
-      if (err.message === 'STUDENT_NOT_FOUND') {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'STUDENT_NOT_FOUND', message: 'Siswa tidak ditemukan.' }
-        });
-      }
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: err.message || 'Gagal memproses penarikan.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const { student_id, amount, transaction_date, description } = req.body || {};
+      return res.json({ success: true, data: await db.createWithdrawal({ student_id, amount, transaction_date, description }, req.user!) });
+    } catch (err: any) { return res.status(400).json({ success: false, error: { code: 'WITHDRAWAL_ERROR', message: err.message } }); }
   });
 
-  // VOID / BATALKAN TRANSAKSI
-  app.post('/api/transactions/void', async (req: Request, res: Response) => {
+  app.post('/api/transactions/void', requireAuth, mutationRateLimiter, async (req, res) => {
     try {
-      const { transaction_id, reason } = req.body;
-      if (!transaction_id) {
-        return res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_TRANSACTION', message: 'ID Transaksi wajib diisi.' }
-        });
-      }
-
-      const result = await db.voidTransaction(transaction_id, reason);
-      res.json({ success: true, data: result });
-    } catch (err: any) {
-      if (err.message === 'TRANSACTION_NOT_FOUND') {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'TRANSACTION_NOT_FOUND', message: 'Transaksi tidak ditemukan.' }
-        });
-      }
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: err.message || 'Gagal membatalkan transaksi.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const { transaction_id, void_reason } = req.body || {};
+      if (!transaction_id) return res.status(400).json({ success: false, error: { code: 'MISSING_TRANSACTION_ID', message: 'ID transaksi wajib diisi.' } });
+      return res.json({ success: true, data: await db.voidTransaction(transaction_id, void_reason, req.user!) });
+    } catch (err: any) { return res.status(400).json({ success: false, error: { code: 'VOID_ERROR', message: err.message } }); }
   });
 
-  // ==========================================
-  // REPORTS API
-  // ==========================================
-  app.get('/api/students/:id/report', (req: Request, res: Response) => {
+  app.get('/api/reports/student/:id', requireAuth, async (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
-      const report = db.getStudentReport(req.params.id, {
-        startDate: startDate as string,
-        endDate: endDate as string
-      });
-
-      if (!report) {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'STUDENT_NOT_FOUND', message: 'Siswa tidak ditemukan.' }
-        });
-      }
-
-      res.json({ success: true, data: report });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal menyusun rekap tabungan siswa.' }
-      });
-    }
+      if (!requireActiveClass(req, res)) return;
+      const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
+      const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined;
+      const report = await db.getStudentReport(req.params.id, req.user!, { startDate, endDate });
+      if (!report) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Siswa tidak ditemukan.' } });
+      return res.json({ success: true, data: report });
+    } catch (err: any) { return res.status(503).json({ success: false, error: { code: 'STUDENT_REPORT_ERROR', message: err.message } }); }
   });
 
-  app.get('/api/reports/class', (req: Request, res: Response) => {
-    try {
-      const report = db.getClassReport();
-      res.json({ success: true, data: report });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal menyusun rekap kelas.' }
-      });
-    }
+  app.get('/api/reports/class', requireAuth, async (req, res) => {
+    try { if (!requireActiveClass(req, res)) return; return res.json({ success: true, data: await db.getClassReport(req.user!) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'CLASS_REPORT_ERROR', message: err.message } }); }
   });
 
-  // ==========================================
-  // SETTINGS & GAS CODE API
-  // ==========================================
-  app.get('/api/settings', (req: Request, res: Response) => {
-    res.json({ success: true, data: db.getSettings() });
+  app.get('/api/settings', requireAuth, async (req, res) => {
+    try { return res.json({ success: true, data: await db.getSettings(req.user!) }); }
+    catch (err: any) { return res.status(400).json({ success: false, error: { code: 'SETTINGS_ERROR', message: err.message } }); }
   });
 
-  app.put('/api/settings', (req: Request, res: Response) => {
-    try {
-      const updated = db.updateSettings(req.body);
-      res.json({ success: true, data: updated });
-    } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: { code: 'SERVER_ERROR', message: 'Gagal memperbarui pengaturan.' }
-      });
-    }
+  app.put('/api/settings', requireAuth, mutationRateLimiter, async (req, res) => {
+    try { return res.json({ success: true, data: await db.updateSettings(req.body || {}, req.user!) }); }
+    catch (err: any) { return res.status(403).json({ success: false, error: { code: 'SETTINGS_UPDATE_ERROR', message: err.message } }); }
   });
 
-  app.post('/api/database/reset', async (req: Request, res: Response) => {
-    db.resetToDefault();
-    const syncRes = await db.syncFromGas();
-    res.json({ 
-      success: true, 
-      data: { 
-        message: syncRes.success 
-          ? `Data lokal dibersihkan & berhasil disinkronkan ulang dengan Google Sheets.` 
-          : 'Data lokal dibersihkan.' 
-      } 
-    });
+  app.get('/api/settings/gas-script', requireAuth, (_req, res) => res.json({ success: true, data: { code: GAS_SCRIPT_CODE } }));
+  app.post('/api/sync/gas', requireAuth, syncRateLimiter, async (req, res) => {
+    try { return res.json({ success: true, data: await db.syncFromGas(req.user!) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'SYNC_ERROR', message: err.message } }); }
   });
-
-  app.post('/api/sync/gas', async (req: Request, res: Response) => {
-    try {
-      const syncResult = await db.syncFromGas();
-      if (!syncResult.success) {
-        return res.status(400).json({ success: false, error: { code: 'SYNC_FAILED', message: syncResult.message } });
-      }
-      res.json({ success: true, data: { message: syncResult.message } });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: err.message || 'Gagal sinkronisasi data.' } });
-    }
-  });
-
-  app.get('/api/gas/script-export', (req: Request, res: Response) => {
-    const code = generateGoogleAppsScriptCode();
-    res.json({ success: true, data: { script: code } });
+  app.post('/api/sync/refresh-cache', requireAuth, syncRateLimiter, async (req, res) => {
+    try { return res.json({ success: true, data: await db.syncFromGas(req.user!) }); }
+    catch (err: any) { return res.status(503).json({ success: false, error: { code: 'SYNC_ERROR', message: err.message } }); }
   });
 
   return app;

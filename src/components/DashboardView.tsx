@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -16,11 +16,11 @@ import {
   CheckCircle2,
   AlertTriangle
 } from 'lucide-react';
-import { DashboardSummary, Transaction, NavTab } from '../types';
-import { api } from '../lib/api';
+import { Transaction, NavTab } from '../types';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../lib/utils';
-import { DashboardSkeleton } from './Skeleton';
+import { DashboardSkeleton, DelayedRender } from './Skeleton';
 import { useToast } from '../context/ToastContext';
+import { useDashboardQuery, useTransactionMutations } from '../hooks/useQueries';
 
 interface DashboardViewProps {
   onNavigate: (tab: NavTab) => void;
@@ -37,52 +37,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectStudent,
   onOpenAddStudent
 }) => {
-  const [data, setData] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { data, isLoading, isFetching, refetch } = useDashboardQuery();
+  const { voidMutation } = useTransactionMutations();
+
   const [selectedTrxForDetail, setSelectedTrxForDetail] = useState<Transaction | null>(null);
   const [voidModalTrx, setVoidModalTrx] = useState<Transaction | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const [isVoiding, setIsVoiding] = useState(false);
 
   const { success, error: toastError } = useToast();
 
-  const loadDashboardData = async (fresh = false) => {
-    try {
-      if (fresh) setIsRefreshing(true);
-      const res = await api.getDashboard(fresh);
-      setData(res);
-    } catch (err: any) {
-      toastError('Gagal Memuat', err.message || 'Tidak dapat memuat ringkasan dashboard.');
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
   const handleVoidTransaction = async () => {
     if (!voidModalTrx) return;
-    setIsVoiding(true);
     try {
-      await api.voidTransaction(voidModalTrx.transaction_id, voidReason);
-      success('Transaksi Dibatalkan', `Transaksi ${voidModalTrx.transaction_id} berhasil di-VOID.`);
+      const res = await voidMutation.mutateAsync({
+        transaction_id: voidModalTrx.transaction_id,
+        void_reason: voidReason,
+      });
+      if (res.warning) {
+        success('Transaksi Di-VOID di Aplikasi', `Transaksi ${voidModalTrx.transaction_id} berhasil dibatalkan. Catatan: ${res.warning}`);
+      } else {
+        success('Transaksi Dibatalkan', `Transaksi ${voidModalTrx.transaction_id} berhasil di-VOID.`);
+      }
       setVoidModalTrx(null);
       setSelectedTrxForDetail(null);
       setVoidReason('');
-      await loadDashboardData(true);
     } catch (err: any) {
       toastError('Gagal Membatalkan', err.message || 'Tidak dapat membatalkan transaksi.');
-    } finally {
-      setIsVoiding(false);
     }
   };
 
-  if (loading) {
-    return <DashboardSkeleton />;
+  if (isLoading && !data) {
+    return (
+      <DelayedRender delay={150}>
+        <DashboardSkeleton />
+      </DelayedRender>
+    );
   }
 
   if (!data) {
@@ -90,7 +79,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="p-8 text-center bg-white rounded-3xl border border-slate-200">
         <p className="text-slate-700">Data dashboard tidak tersedia.</p>
         <button
-          onClick={() => loadDashboardData(true)}
+          onClick={() => refetch()}
           className="mt-4 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-semibold"
         >
           Coba Lagi
@@ -118,12 +107,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         <button
           id="refresh-dashboard-btn"
-          onClick={() => loadDashboardData(true)}
-          disabled={isRefreshing}
+          onClick={() => refetch()}
+          disabled={isFetching}
           className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all active:scale-95 disabled:opacity-50"
           title="Segarkan data"
         >
-          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin text-emerald-600' : ''}`} />
         </button>
       </div>
 
@@ -292,14 +281,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         ) : (
           <div className="space-y-2">
-            {data.recentTransactions.slice(0, 7).map((trx) => {
+            {data.recentTransactions.slice(0, 7).map((trx, idx) => {
               const isDeposit = trx.transaction_type === 'SETORAN';
               const isVoid = trx.status === 'VOID';
 
               return (
                 <div
-                  key={trx.transaction_id}
-                  id={`trx-card-${trx.transaction_id}`}
+                  key={trx.transaction_id ? `${trx.transaction_id}-${idx}` : `recent-trx-${idx}`}
+                  id={`trx-card-${trx.transaction_id || idx}`}
                   onClick={() => setSelectedTrxForDetail(trx)}
                   className={`p-3.5 bg-white rounded-2xl border transition-all cursor-pointer hover:border-slate-300 hover:shadow-xs active:scale-[0.99] flex items-center justify-between gap-3 ${
                     isVoid ? 'opacity-60 bg-slate-50 border-slate-200' : 'border-slate-200/80'
@@ -366,83 +355,90 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Transaction Detail Modal */}
       {selectedTrxForDetail && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="relative w-full max-w-sm bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3 shrink-0">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Detail Transaksi
               </span>
               <button
+                type="button"
                 onClick={() => setSelectedTrxForDetail(null)}
-                className="text-xs text-slate-700 hover:text-slate-900 font-semibold p-1 rounded-md"
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
               >
-                ✕ Tutup
+                ✕
               </button>
             </div>
 
-            <div className="text-center py-2">
-              <span
-                className={`inline-block px-3 py-1 rounded-full text-xs font-bold mb-2 ${
-                  selectedTrxForDetail.status === 'VOID'
-                    ? 'bg-rose-100 text-rose-700'
-                    : selectedTrxForDetail.transaction_type === 'SETORAN'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}
-              >
-                {selectedTrxForDetail.status === 'VOID'
-                  ? 'TRANSAKSI DIBATALKAN (VOID)'
-                  : selectedTrxForDetail.transaction_type}
-              </span>
-              <h3 className="text-2xl font-black text-slate-900">
-                {formatRupiah(selectedTrxForDetail.amount)}
-              </h3>
-              <p className="text-xs text-slate-700 mt-0.5">
-                {selectedTrxForDetail.student_nama} (NIS: {selectedTrxForDetail.student_nis})
-              </p>
+            <div className="flex-1 overflow-y-auto pr-0.5 space-y-3.5 custom-scrollbar min-h-0">
+              <div className="text-center py-2 bg-slate-50/70 rounded-2xl p-3 border border-slate-100">
+                <span
+                  className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase mb-1.5 ${
+                    selectedTrxForDetail.status === 'VOID'
+                      ? 'bg-rose-100 text-rose-700'
+                      : selectedTrxForDetail.transaction_type === 'SETORAN'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {selectedTrxForDetail.status === 'VOID'
+                    ? 'TRANSAKSI DIBATALKAN (VOID)'
+                    : selectedTrxForDetail.transaction_type}
+                </span>
+                <h3 className={`text-xl sm:text-2xl font-black ${
+                  selectedTrxForDetail.status === 'VOID' ? 'text-slate-400 line-through' : 'text-slate-900'
+                }`}>
+                  {formatRupiah(selectedTrxForDetail.amount)}
+                </h3>
+                <p className="text-xs font-semibold text-slate-700 mt-0.5">
+                  {selectedTrxForDetail.student_nama} (NISN: {selectedTrxForDetail.student_nisn || '-'})
+                </p>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-3.5 space-y-2 text-xs border border-slate-200/60">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">ID Transaksi</span>
+                  <span className="font-mono font-bold text-slate-800 text-[11px]">{selectedTrxForDetail.transaction_id}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Tanggal Transaksi</span>
+                  <span className="font-semibold text-slate-800">{formatDateIndo(selectedTrxForDetail.transaction_date)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Waktu Simpan</span>
+                  <span className="font-semibold text-slate-800">{formatDateTimeIndo(selectedTrxForDetail.created_at)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Wali Kelas</span>
+                  <span className="font-semibold text-slate-800">{selectedTrxForDetail.created_by}</span>
+                </div>
+                <div className="flex justify-between items-start border-t border-slate-200/60 pt-2">
+                  <span className="text-slate-500 shrink-0">Keterangan</span>
+                  <span className="font-semibold text-slate-800 text-right max-w-[180px] break-words">{selectedTrxForDetail.description || '-'}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="bg-slate-50 rounded-2xl p-3.5 my-4 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-700">ID Transaksi</span>
-                <span className="font-mono font-bold text-slate-800">{selectedTrxForDetail.transaction_id}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-700">Tanggal Transaksi</span>
-                <span className="font-semibold text-slate-800">{formatDateIndo(selectedTrxForDetail.transaction_date)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-700">Waktu Simpan</span>
-                <span className="font-semibold text-slate-800">{formatDateTimeIndo(selectedTrxForDetail.created_at)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-700">Wali Kelas Pencatat</span>
-                <span className="font-semibold text-slate-800">{selectedTrxForDetail.created_by}</span>
-              </div>
-              <div className="flex justify-between border-t border-slate-200/60 pt-2">
-                <span className="text-slate-700">Keterangan</span>
-                <span className="font-semibold text-slate-800 text-right max-w-[180px]">{selectedTrxForDetail.description}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 pt-3.5 border-t border-slate-100 shrink-0 mt-3">
               <button
+                type="button"
                 onClick={() => {
                   const sId = selectedTrxForDetail.student_id;
                   setSelectedTrxForDetail(null);
                   onSelectStudent(sId);
                 }}
-                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors"
+                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-600/20 cursor-pointer"
               >
                 Buka Rekap Siswa Ini
               </button>
 
               {selectedTrxForDetail.status === 'ACTIVE' && (
                 <button
+                  type="button"
                   onClick={() => {
                     setVoidModalTrx(selectedTrxForDetail);
                   }}
-                  className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors"
+                  className="w-full py-2 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                 >
                   Batalkan Transaksi Ini (VOID)
                 </button>
@@ -454,48 +450,52 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Confirmation Void Modal */}
       {voidModalTrx && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-rose-100 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-2.5 text-rose-600 mb-3">
-              <AlertTriangle className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="relative w-full max-w-sm bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-rose-100 max-h-[calc(100dvh-1.5rem)] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-2.5 text-rose-600 mb-2.5 shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
               <h4 className="font-bold text-sm text-slate-900">Batalkan Transaksi (VOID)?</h4>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed mb-3">
-              Membatalkan transaksi <strong>{voidModalTrx.transaction_id}</strong> senilai{' '}
-              <strong>{formatRupiah(voidModalTrx.amount)}</strong> untuk siswa{' '}
-              <strong>{voidModalTrx.student_nama}</strong>. Transaksi tidak akan dihapus permanen agar histori tetap aman, namun saldo siswa akan disesuaikan otomatis.
-            </p>
+            <div className="flex-1 overflow-y-auto pr-0.5 space-y-3 custom-scrollbar min-h-0">
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Membatalkan transaksi <strong>{voidModalTrx.transaction_id}</strong> senilai{' '}
+                <strong>{formatRupiah(voidModalTrx.amount)}</strong> untuk siswa{' '}
+                <strong>{voidModalTrx.student_nama}</strong>. Transaksi tidak akan dihapus permanen agar histori pembukuan tetap aman, namun saldo siswa akan disesuaikan otomatis.
+              </p>
 
-            <div className="mb-4">
-              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                Alasan Pembatalan (Opsional)
-              </label>
-              <input
-                type="text"
-                value={voidReason}
-                onChange={(e) => setVoidReason(e.target.value)}
-                placeholder="Contoh: Salah ketik nominal siswa"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-rose-500 outline-none"
-              />
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">
+                  Alasan Pembatalan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder="Contoh: Salah ketik nominal siswa"
+                  className="w-full px-3 py-2.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-rose-500 outline-none font-medium text-slate-900"
+                />
+              </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 pt-3.5 border-t border-slate-100 shrink-0 mt-3">
               <button
                 type="button"
                 onClick={() => setVoidModalTrx(null)}
-                disabled={isVoiding}
-                className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50"
+                disabled={voidMutation.isPending}
+                className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
                 onClick={handleVoidTransaction}
-                disabled={isVoiding}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm"
+                disabled={voidMutation.isPending}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-[0.99] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-rose-600/20 cursor-pointer"
               >
-                {isVoiding ? 'Memproses...' : 'Ya, VOID Transaksi'}
+                {voidMutation.isPending ? 'Memproses...' : 'Ya, VOID Transaksi'}
               </button>
             </div>
           </div>

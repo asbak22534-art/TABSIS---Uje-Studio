@@ -79,3 +79,43 @@ export const ReportSkeleton: React.FC = () => {
     </div>
   );
 };
+
+export const SettingsSkeleton: React.FC = () => {
+  return (
+    <div className="space-y-5 animate-pulse max-w-3xl mx-auto">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-4 w-60" />
+      </div>
+      <Skeleton className="h-48 rounded-2xl" />
+      <Skeleton className="h-48 rounded-2xl" />
+    </div>
+  );
+};
+
+export const TransactionSkeleton: React.FC = () => {
+  return (
+    <div className="space-y-5 animate-pulse max-w-xl mx-auto">
+      <Skeleton className="h-10 w-48 rounded-xl" />
+      <Skeleton className="h-44 rounded-2xl" />
+      <Skeleton className="h-64 rounded-2xl" />
+    </div>
+  );
+};
+
+export const DelayedRender: React.FC<{
+  delay?: number;
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}> = ({ delay = 200, children, fallback = null }) => {
+  const [show, setShow] = React.useState(false);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setShow(true), delay);
+    return () => clearTimeout(timer);
+  }, [delay]);
+
+  if (!show) return <>{fallback}</>;
+  return <>{children}</>;
+};
+

@@ -1,104 +1,59 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Settings, 
-  User, 
-  School, 
-  Key, 
-  FileCode, 
-  Copy, 
-  Check, 
-  RotateCcw, 
-  DownloadCloud, 
-  ShieldCheck, 
-  HelpCircle,
-  ExternalLink,
-  Sparkles,
-  Save,
-  CheckCircle2,
-  RefreshCw,
-  TableProperties
-} from 'lucide-react';
-import { AppSettings } from '../types';
+import { School, Key, FileCode, Copy, Check, RefreshCw, Save, X, DownloadCloud, ShieldCheck, Lock, Eye, EyeOff } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useSettingsQuery, useAccessProfileQuery, useGasScriptQuery } from '../hooks/useQueries';
+import { SettingsSkeleton, DelayedRender } from './Skeleton';
 
 export const SettingsView: React.FC = () => {
-  const { user, logout } = useAuth();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, refreshUser, activeAcademicYear, allowedAcademicYears, activeClassId } = useAuth();
+
+  const { data: settings, isLoading: loadingSettings, refetch: refetchSettings } = useSettingsQuery();
+  const { data: profile, isLoading: loadingProfile, refetch: refetchProfile } = useAccessProfileQuery();
+  const { data: gasScript = '', isLoading: loadingGas } = useGasScriptQuery();
+
+  const [schoolName, setSchoolName] = useState(() => settings?.school_name || '');
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-
-  // Edit fields
-  const [schoolName, setSchoolName] = useState('');
-  const [classNameVal, setClassNameVal] = useState('');
-  const [teacherName, setTeacherName] = useState('');
-  const [academicYear, setAcademicYear] = useState('');
-  const [gasUrl, setGasUrl] = useState('');
-
-  // GAS Script Code Modal / Viewer
-  const [gasScript, setGasScript] = useState('');
   const [copied, setCopied] = useState(false);
   const [showGasModal, setShowGasModal] = useState(false);
-
-  // Install PWA Prompt deferred
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+
+  // Sync initial schoolName when settings loaded
+  useEffect(() => {
+    if (settings?.school_name) {
+      setSchoolName(settings.school_name);
+    }
+  }, [settings?.school_name]);
+
+  // Ganti Password State
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showOldPassword, setShowOldPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const { success, error: toastError } = useToast();
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await api.getSettings();
-        setSettings(data);
-        setSchoolName(data.school_name);
-        setClassNameVal(data.class_name);
-        setTeacherName(data.teacher_name);
-        setAcademicYear(data.academic_year);
-        setGasUrl(data.gas_script_url || '');
-
-        const gasCode = await api.getGasScript();
-        setGasScript(gasCode);
-      } catch (err: any) {
-        toastError('Gagal Memuat Pengaturan', err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-
-    // Check PWA install prompt
-    const handleBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setInstallPrompt(e);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setIsInstalled(true);
-    }
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
-    };
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    if (window.matchMedia('(display-mode: standalone)').matches) setIsInstalled(true);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  const handleSaveSettings = async (e: React.FormEvent) => {
+  const handleSaveSchool = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!schoolName.trim()) return;
     setSaving(true);
     try {
-      const updated = await api.updateSettings({
-        school_name: schoolName.trim(),
-        class_name: classNameVal.trim(),
-        teacher_name: teacherName.trim(),
-        academic_year: academicYear.trim(),
-        gas_script_url: gasUrl.trim()
-      });
-      setSettings(updated);
-      success('Pengaturan Disimpan', 'Identitas sekolah & wali kelas berhasil diperbarui.');
+      await api.updateSettings({ school_name: schoolName.trim() });
+      await refetchSettings();
+      await refreshUser();
+      success('Pengaturan Disimpan', 'Identitas sekolah berhasil diperbarui.');
     } catch (err: any) {
       toastError('Gagal Menyimpan', err.message);
     } finally {
@@ -106,374 +61,349 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleCopyGasCode = () => {
-    navigator.clipboard.writeText(gasScript);
-    setCopied(true);
-    success('Kode Disalin!', 'Script Google Apps Script siap ditempel di script.google.com');
-    setTimeout(() => setCopied(false), 3000);
-  };
-
-  const handleSyncGasNow = async () => {
-    if (!gasUrl) {
-      toastError('URL Belum Diisi', 'Silakan masukkan URL Web App Google Apps Script terlebih dahulu.');
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!oldPassword) {
+      toastError('Form Belum Lengkap', 'Masukkan kata sandi saat ini.');
       return;
     }
+    if (newPassword.length < 8) {
+      toastError('Kata Sandi Terlalu Pendek', 'Kata sandi baru minimal 8 karakter.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toastError('Konfirmasi Tidak Sesuai', 'Konfirmasi kata sandi baru tidak cocok.');
+      return;
+    }
+    if (oldPassword === newPassword) {
+      toastError('Kata Sandi Sama', 'Kata sandi baru tidak boleh sama dengan kata sandi saat ini.');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await api.changePassword(oldPassword, newPassword);
+      success('Kata Sandi Diperbarui', res.message || 'Kata sandi berhasil diubah.');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      toastError('Gagal Mengubah Kata Sandi', err.message);
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const sync = async () => {
     setSyncing(true);
     try {
-      const res = await api.syncFromGas();
-      success('Sinkronisasi Sukses!', res?.message || 'Data pengguna & transaksi dari Google Sheets berhasil diperbarui.');
-      // Refresh local view
-      const fresh = await api.getSettings();
-      setSettings(fresh);
-      setSchoolName(fresh.school_name);
-      setClassNameVal(fresh.class_name);
-      setTeacherName(fresh.teacher_name);
-      setAcademicYear(fresh.academic_year);
+      const r = await api.syncFromGas();
+      await refreshUser();
+      await Promise.all([refetchSettings(), refetchProfile()]);
+      success('Sinkronisasi Sukses', r.message || 'Data diperbarui dari Google Sheets.');
     } catch (err: any) {
-      const errorMsg = typeof err === 'string' ? err : (err?.message || 'Periksa apakah URL Web App sudah dideploy versi terbaru.');
-      toastError('Gagal Sinkronisasi', errorMsg);
+      toastError('Gagal Sinkronisasi', err.message);
     } finally {
       setSyncing(false);
     }
   };
 
-  const handleResetData = async () => {
-    if (window.confirm('Apakah Anda ingin membersihkan cache lokal dan menyinkronkan ulang seluruh data langsung dari Google Spreadsheet?')) {
-      try {
-        setSyncing(true);
-        const res = await api.resetDemoData();
-        success('Sinkronisasi Sukses', res?.message || 'Data berhasil disinkronkan ulang dari Google Sheets.');
-        setTimeout(() => window.location.reload(), 1000);
-      } catch (err: any) {
-        toastError('Gagal Sinkronisasi', err.message);
-      } finally {
-        setSyncing(false);
-      }
-    }
+  const copyGas = async () => {
+    await navigator.clipboard.writeText(gasScript);
+    setCopied(true);
+    success('Kode Disalin', 'Tempel Code.gs terbaru ke Google Apps Script.');
+    setTimeout(() => setCopied(false), 2500);
   };
 
-  const handleInstallPWA = async () => {
+  const installPwa = async () => {
     if (!installPrompt) {
-      success('Info PWA', 'Untuk memasang di HP: buka menu browser > Tambahkan ke Layar Utama (Add to Home Screen).');
+      success('Info PWA', 'Gunakan menu browser > Tambahkan ke Layar Utama.');
       return;
     }
     installPrompt.prompt();
-    const result = await installPrompt.userChoice;
-    if (result.outcome === 'accepted') {
-      setIsInstalled(true);
-      success('Berhasil Terpasang', 'Aplikasi Tabungan Siswa terpasang di perangkat Anda.');
-    }
+    const r = await installPrompt.userChoice;
+    if (r.outcome === 'accepted') setIsInstalled(true);
     setInstallPrompt(null);
   };
 
-  if (loading) {
+  const isInitialLoading = (loadingSettings || loadingProfile) && (!settings || !profile);
+
+  if (isInitialLoading) {
     return (
-      <div className="space-y-4 animate-pulse pb-10">
-        <div className="h-28 bg-slate-200 rounded-3xl" />
-        <div className="h-64 bg-slate-200 rounded-3xl" />
-      </div>
+      <DelayedRender delay={150}>
+        <SettingsSkeleton />
+      </DelayedRender>
     );
   }
 
+  const classesThisYear = profile?.classes_by_year?.[activeAcademicYear || ''] || [];
+
   return (
     <div className="max-w-2xl mx-auto space-y-5 pb-14">
-      {/* Title */}
       <div>
-        <h1 className="text-xl font-black text-slate-900 tracking-tight">
-          Pengaturan & Profil
-        </h1>
-        <p className="text-xs text-slate-700 font-medium">
-          Kelola profil wali kelas, sekolah, integrasi Google Sheets & PWA
+        <h1 className="text-xl font-black text-slate-900">Pengaturan & Akun</h1>
+        <p className="text-xs text-slate-600">
+          Kelola profil akun, ganti kata sandi, dan sinkronisasi data dari Google Sheets.
         </p>
       </div>
 
-      {/* PWA Install Banner */}
       {!isInstalled && (
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-4 sm:p-5 shadow-lg shadow-emerald-700/15 flex items-center justify-between gap-3">
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
-              <DownloadCloud className="w-5 h-5 text-white" />
-            </div>
+            <DownloadCloud className="w-5 h-5" />
             <div>
-              <p className="text-sm font-bold leading-tight">Pasang Aplikasi di HP (PWA)</p>
-              <p className="text-xs text-emerald-100/90 mt-0.5">
-                Buka lebih cepat & responsif seperti aplikasi native tanpa instalasi Play Store.
-              </p>
+              <p className="text-sm font-bold">Pasang Aplikasi di HP</p>
+              <p className="text-xs text-emerald-100">Gunakan sebagai PWA untuk akses cepat dan offline cache.</p>
             </div>
           </div>
           <button
-            onClick={handleInstallPWA}
-            className="px-4 py-2 bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-black flex-shrink-0 shadow-sm active:scale-95 transition-all"
+            onClick={installPwa}
+            className="px-4 py-2 bg-white text-emerald-800 rounded-xl text-xs font-black hover:bg-emerald-50 transition-colors"
           >
-            Pasang Sekarang
+            Pasang
           </button>
         </div>
       )}
 
-      {/* Profile & School Settings Form */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs">
-        <div className="flex items-center gap-2 pb-4 border-b border-slate-100 mb-4">
-          <School className="w-4 h-4 text-emerald-600" />
-          <h2 className="text-sm font-bold text-slate-900">Identitas Sekolah & Wali Kelas</h2>
+      {/* Akun & Lingkup Akses */}
+      <section className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
+          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+          <h2 className="text-sm font-bold text-slate-900">Akun & Lingkup Tugas Guru</h2>
         </div>
+        <div className="text-xs bg-slate-50 rounded-2xl p-4 space-y-2">
+          <div className="flex justify-between gap-3">
+            <span className="text-slate-600">Nama Guru</span>
+            <strong className="text-right text-slate-900">{user?.name || '-'}</strong>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-slate-600">Username</span>
+            <strong className="text-slate-900 font-mono">{user?.username || '-'}</strong>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-slate-600">Role</span>
+            <strong className="text-emerald-700 uppercase">{user?.role || 'GURU'}</strong>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-slate-600">Tahun Pelajaran yang Ditugaskan</span>
+            <strong className="text-right text-slate-900">{allowedAcademicYears.join(', ') || 'Belum ada tugas'}</strong>
+          </div>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase text-slate-600 mb-2">
+            Kelas Aktif pada {activeAcademicYear || '-'}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {classesThisYear.length ? (
+              classesThisYear.map((c) => (
+                <span
+                  key={c}
+                  className="inline-flex items-center px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold"
+                >
+                  Kelas {c}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-slate-500">Belum ada kelas yang ditugaskan pada tahun ini.</span>
+            )}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-[11px] text-blue-950 leading-relaxed">
+          Struktur data tersimpan di Google Sheets (<b>USERS</b>, <b>ACADEMIC_YEARS</b>, <b>CLASS_SECTIONS</b>, <b>TEACHER_ASSIGNMENTS</b>, dan <b>STUDENT_ENROLLMENTS</b>). Setiap guru hanya dapat melihat dan mengelola kelas yang ditugaskan kepadanya.
+        </div>
+      </section>
 
-        <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
+      {/* Ganti Password */}
+      <section className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
+          <Key className="w-4 h-4 text-emerald-600" />
+          <h2 className="text-sm font-bold text-slate-900">Ganti Kata Sandi</h2>
+        </div>
+        <form onSubmit={handleChangePassword} className="space-y-3.5 text-xs">
           <div>
             <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
-              Nama Sekolah
+              Kata Sandi Saat Ini
             </label>
-            <input
-              type="text"
-              required
-              value={schoolName}
-              onChange={(e) => setSchoolName(e.target.value)}
-              placeholder="Contoh: SD Negeri 01 Teladan"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none font-medium text-slate-900"
-            />
+            <div className="relative">
+              <input
+                type={showOldPassword ? 'text' : 'password'}
+                required
+                value={oldPassword}
+                onChange={(e) => setOldPassword(e.target.value)}
+                placeholder="Masukkan kata sandi saat ini"
+                className="w-full px-3.5 py-2.5 pr-10 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-emerald-500 text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOldPassword(!showOldPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showOldPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
-                Nama Kelas
+                Kata Sandi Baru
               </label>
-              <input
-                type="text"
-                required
-                value={classNameVal}
-                onChange={(e) => setClassNameVal(e.target.value)}
-                placeholder="Kelas 5A"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none font-medium text-slate-900"
-              />
+              <div className="relative">
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  required
+                  minLength={8}
+                  maxLength={128}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Min. 8 karakter"
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-emerald-500 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div>
               <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
-                Tahun Ajaran
+                Ulangi Kata Sandi Baru
               </label>
               <input
-                type="text"
+                type={showNewPassword ? 'text' : 'password'}
                 required
-                value={academicYear}
-                onChange={(e) => setAcademicYear(e.target.value)}
-                placeholder="2026/2027"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none font-medium text-slate-900"
+                minLength={8}
+                maxLength={128}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Ketik ulang kata sandi baru"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-emerald-500 text-xs"
               />
             </div>
-          </div>
-
-          <div>
-            <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
-              Nama Wali Kelas (Guru)
-            </label>
-            <input
-              type="text"
-              required
-              value={teacherName}
-              onChange={(e) => setTeacherName(e.target.value)}
-              placeholder="Contoh: Ibu Siti Rahmawati, S.Pd."
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none font-medium text-slate-900"
-            />
           </div>
 
           <button
             type="submit"
-            disabled={saving}
-            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50"
+            disabled={changingPassword}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
           >
-            <Save className="w-4 h-4" />
-            <span>{saving ? 'Menyimpan...' : 'Simpan Pengaturan'}</span>
+            <Lock className="w-4 h-4" />
+            {changingPassword ? 'Memperbarui Kata Sandi...' : 'Perbarui Kata Sandi'}
           </button>
         </form>
-      </div>
+      </section>
 
-      {/* Google Apps Script & Google Sheets Integration Hub */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs space-y-4">
+      {/* Identitas Sekolah */}
+      <section className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs">
+        <div className="flex items-center gap-2 pb-4 border-b border-slate-100 mb-4">
+          <School className="w-4 h-4 text-emerald-600" />
+          <h2 className="text-sm font-bold text-slate-900">Identitas Sekolah</h2>
+        </div>
+        <form onSubmit={handleSaveSchool} className="space-y-4 text-xs">
+          <div>
+            <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">Nama Sekolah</label>
+            <input
+              required
+              value={schoolName}
+              onChange={(e) => setSchoolName(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-emerald-500"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">Tahun Pelajaran Aktif</label>
+              <input
+                readOnly
+                value={activeAcademicYear || 'Belum dipilih'}
+                className="w-full px-3.5 py-2.5 rounded-xl border bg-slate-100 font-bold text-emerald-800"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">Kelas Aktif</label>
+              <input
+                readOnly
+                value={activeClassId || 'Belum dipilih'}
+                className="w-full px-3.5 py-2.5 rounded-xl border bg-slate-100 font-bold text-emerald-800"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Menyimpan...' : 'Simpan Nama Sekolah'}
+          </button>
+        </form>
+      </section>
+
+      {/* Google Sheets & Apps Script */}
+      <section className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <FileCode className="w-4 h-4 text-teal-600" />
-            <h2 className="text-sm font-bold text-slate-900">Integrasi Google Sheets & Apps Script</h2>
+            <h2 className="text-sm font-bold text-slate-900">Google Sheets & Apps Script</h2>
           </div>
-          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-            gasUrl 
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              : 'bg-slate-100 text-slate-600 border-slate-200'
-          }`}>
-            {gasUrl ? '● Terhubung ke Cloud' : '○ Belum Diisi'}
+          <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${settings?.gas_configured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            {settings?.gas_configured ? '● Terkonfigurasi' : '○ Belum'}
           </span>
         </div>
-
-        <p className="text-xs text-slate-600 leading-relaxed">
-          Tempelkan <strong>URL Web App</strong> hasil deploy Google Apps Script (berakhiran <code>/exec</code>) di bawah ini agar data tabungan siswa tersinkronisasi ke Google Spreadsheet Anda.
-        </p>
-
-        {/* Web App URL Input */}
-        <div>
-          <label className="block font-bold text-slate-700 uppercase mb-1.5 text-[10px]">
-            URL Web App Google Apps Script (/exec)
-          </label>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="url"
-              value={gasUrl}
-              onChange={(e) => setGasUrl(e.target.value)}
-              placeholder="https://script.google.com/macros/s/.../exec"
-              className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none font-mono text-xs text-slate-900 truncate"
-            />
-            <button
-              type="button"
-              onClick={handleSaveSettings}
-              disabled={saving}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all flex-shrink-0 disabled:opacity-50"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{saving ? 'Menyimpan...' : 'Simpan Link GAS'}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row gap-2.5">
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
-            type="button"
-            onClick={handleSyncGasNow}
-            disabled={syncing || !gasUrl}
-            className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-xs"
+            onClick={sync}
+            disabled={syncing}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            <span>{syncing ? 'Menyinkronkan Data...' : 'Sinkronkan Data Sekarang'}</span>
+            {syncing ? 'Menyinkronkan...' : 'Sinkronkan Data'}
           </button>
-
           <button
-            type="button"
             onClick={() => setShowGasModal(true)}
-            className="flex-1 py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
           >
-            <FileCode className="w-4 h-4 text-emerald-400" />
-            <span>Kode Apps Script Terbaru (Code.gs)</span>
+            <FileCode className="w-4 h-4" />
+            Lihat Code.gs
           </button>
-
           <button
-            type="button"
-            onClick={handleCopyGasCode}
-            className="py-2.5 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+            onClick={copyGas}
+            className="px-4 py-2.5 border border-slate-300 hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-            <span>{copied ? 'Kode Tersalin!' : 'Salin Kode'}</span>
+            {copied ? 'Tersalin' : 'Salin Kode'}
           </button>
         </div>
+      </section>
 
-        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs space-y-3">
-          <p className="font-bold text-slate-900 flex items-center gap-1.5">
-            <TableProperties className="w-4 h-4 text-emerald-600" />
-            Struktur Kolom Sheet di Google Spreadsheet:
-          </p>
-          <div className="space-y-2 text-[11px] font-mono text-slate-700">
-            <div className="p-2 bg-white rounded-xl border border-slate-200">
-              <span className="font-bold text-emerald-700 font-sans">1. Sheet TRANSACTIONS:</span>
-              <p className="text-slate-600 mt-0.5 break-all">
-                transaction_id, nisn, nama, transaction_type, amount, transaction_date, description, created_by, created_at, updated_at, status, void_reason
-              </p>
-            </div>
-            <div className="p-2 bg-white rounded-xl border border-slate-200">
-              <span className="font-bold text-emerald-700 font-sans">2. Sheet STUDENTS:</span>
-              <p className="text-slate-600 mt-0.5 break-all">
-                nisn, nama, jenis_kelamin, kelas, no_hp_wali, status, created_at, updated_at
-              </p>
-            </div>
-            <div className="p-2 bg-white rounded-xl border border-slate-200">
-              <span className="font-bold text-emerald-700 font-sans">3. Sheet USERS:</span>
-              <p className="text-slate-600 mt-0.5 break-all">
-                user_id, username, name, password_hash, class_id, status, created_at, updated_at
-              </p>
-            </div>
-            <div className="p-2 bg-white rounded-xl border border-slate-200">
-              <span className="font-bold text-emerald-700 font-sans">4. Sheet SETTINGS:</span>
-              <p className="text-slate-600 mt-0.5 break-all">
-                setting_key, setting_value
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-amber-50/80 border border-amber-200/70 rounded-2xl p-3.5 text-xs text-amber-900 space-y-1">
-          <p className="font-bold flex items-center gap-1.5 text-amber-950">
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            Tips Pembaruan Script di Google Spreadsheet:
-          </p>
-          <p className="text-[11px] text-amber-800/90 leading-relaxed">
-            Buka <em>Ekstensi &gt; Apps Script</em> di spreadsheet Anda &gt; paste kode <strong>Code.gs</strong> terbaru &gt; klik <strong>Deploy &gt; Manage deployments &gt; Edit (ikon pensil) &gt; Version: New version &gt; Deploy</strong>.
-          </p>
-        </div>
-      </div>
-
-      {/* Security & System Info */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs space-y-3">
-        <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <h2 className="text-sm font-bold text-slate-900">Sistem & Keamanan Data</h2>
-        </div>
-
-        <div className="space-y-2 text-xs text-slate-600">
-          <div className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-            <span><strong>Source of Truth:</strong> Saldo dihitung dinamis dari total setoran dikurangi penarikan aktif. Transaksi tidak dihapus permanen untuk mencegah manipulasi.</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-            <span><strong>Pessimistic Locking:</strong> Transaksi divalidasi langsung di backend sebelum konfirmasi. Double-click dicegah secara ketat.</span>
-          </div>
-        </div>
-
-        <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-          <button
-            onClick={handleResetData}
-            disabled={syncing}
-            className="text-xs text-slate-500 hover:text-emerald-700 flex items-center gap-1.5 font-medium transition-colors disabled:opacity-50"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            <span>{syncing ? 'Menyinkronkan...' : 'Bersihkan Cache & Sinkronkan Ulang dari Google Sheets'}</span>
-          </button>
-
-          <button
-            onClick={logout}
-            className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors"
-          >
-            Keluar (Logout)
-          </button>
-        </div>
-      </div>
-
-      {/* Google Apps Script Modal Viewer */}
+      {/* GAS Code Modal */}
       {showGasModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-3">
+          <div className="bg-white rounded-3xl w-full max-w-3xl max-h-[calc(100dvh-1.5rem)] flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Kode Google Apps Script (Code.gs)</h3>
-                <p className="text-[11px] text-slate-700">Paste kode ini di script.google.com untuk menghubungkan ke Google Sheets</p>
+                <h3 className="font-black text-sm text-slate-900">Code.gs — Google Apps Script Backend</h3>
+                <p className="text-[11px] text-slate-500">Salin kode ini ke Apps Script Spreadsheet Anda.</p>
               </div>
               <button
                 onClick={() => setShowGasModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg text-sm"
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
-
-            <div className="flex-1 overflow-y-auto bg-slate-950 text-emerald-400 p-4 rounded-2xl font-mono text-xs leading-relaxed my-2 select-all border border-slate-800">
-              <pre>{gasScript}</pre>
-            </div>
-
-            <div className="pt-3 flex items-center justify-between gap-3 border-t border-slate-100">
-              <p className="text-[11px] text-slate-700 font-medium">
-                Tersedia fungsi otomatis <code>initDatabase()</code> untuk membuat sheet.
-              </p>
+            <pre className="flex-1 overflow-auto p-4 text-[11px] bg-slate-950 text-emerald-200 whitespace-pre font-mono">
+              {gasScript}
+            </pre>
+            <div className="p-4 border-t border-slate-100">
               <button
-                onClick={handleCopyGasCode}
-                className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
+                onClick={copyGas}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors"
               >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'Tersalin!' : 'Salin Semua Kode'}</span>
+                Salin Seluruh Kode
               </button>
             </div>
           </div>

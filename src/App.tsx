@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Navbar } from './components/Navbar';
@@ -15,7 +17,7 @@ import { api } from './lib/api';
 import { AnimatePresence, motion } from 'motion/react';
 
 const MainAppContent: React.FC = () => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, activeAcademicYear, activeClassId } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
@@ -31,7 +33,7 @@ const MainAppContent: React.FC = () => {
 
   useEffect(() => {
     // Register PWA Service Worker if supported
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+    if ('serviceWorker' in navigator && Boolean((import.meta as any).env?.PROD)) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('SW registration failed:', err);
       });
@@ -40,7 +42,14 @@ const MainAppContent: React.FC = () => {
     if (isAuthenticated) {
       api.getSettings().then(setSettings).catch(() => {});
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, activeAcademicYear, activeClassId]);
+
+  useEffect(() => {
+    // Prevent stale selections/transactions from the previously active class.
+    setSelectedStudentId(null);
+    setTransactionInitialStudentId(undefined);
+    setOpenAddStudentDirectly(false);
+  }, [activeAcademicYear, activeClassId]);
 
   if (isLoading) {
     return (
@@ -82,20 +91,20 @@ const MainAppContent: React.FC = () => {
               setOpenAddStudentDirectly(false);
               setCurrentTab(tab);
             }}
-            classNameTitle={settings?.class_name ? `Kelas ${settings.class_name}` : 'Kelas 5C'}
+            classNameTitle={activeClassId ? `Kelas ${activeClassId}` : 'Kelas'}
             schoolName={settings?.school_name || 'MI Islam Terpadu Al-Uswah Pasirian'}
           />
 
           {/* Main Container */}
-          <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 md:pb-10">
+          <main id="main-content" className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 md:pb-10 min-h-[calc(100vh-140px)]">
             <AnimatePresence mode="wait">
               {selectedStudentId ? (
                 <motion.div
                   key={`student-detail-${selectedStudentId}`}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.18 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.12 }}
                 >
                   <StudentDetailView
                     studentId={selectedStudentId}
@@ -116,11 +125,11 @@ const MainAppContent: React.FC = () => {
                 </motion.div>
               ) : (
                 <motion.div
-                  key={currentTab}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18 }}
+                  key={`${activeAcademicYear || 'tahun'}-${activeClassId || 'kelas'}-${currentTab}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.12 }}
                 >
                   {currentTab === 'dashboard' && (
                     <DashboardView
@@ -196,10 +205,12 @@ const MainAppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AuthProvider>
-        <MainAppContent />
-      </AuthProvider>
-    </ToastProvider>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <AuthProvider>
+          <MainAppContent />
+        </AuthProvider>
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }

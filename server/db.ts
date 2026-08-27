@@ -1,987 +1,669 @@
-import fs from 'fs';
-import path from 'path';
-import { 
-  User, 
-  Student, 
-  Transaction, 
-  AppSettings, 
-  DashboardSummary, 
-  ClassReport, 
-  StudentReport 
-} from '../src/types.js';
+import crypto from 'crypto';
+import type {
+  Student,
+  Transaction,
+  TransactionType,
+  AppSettings,
+  User,
+  UserRole,
+  DashboardSummary,
+  StudentReport,
+  ClassReport,
+  ApiResponse,
+  AccessProfile,
+  ClassSection,
+  BootstrapData,
+  TransactionMutationResult
+} from '../src/types';
+import {
+  CONFIG,
+  validateFinancialAmount,
+  validateNisn,
+  validateTransactionDate,
+  sanitizeText,
+  getJakartaToday,
+  hashPassword,
+  verifyPassword,
+  createSignedSessionToken
+} from './security';
 
-interface SessionData {
-  session_id: string;
+interface AuthRecord {
   user_id: string;
-  token_hash: string;
-  created_at: string;
-  expires_at: string;
-  status: 'ACTIVE' | 'EXPIRED';
+  username: string;
+  name: string;
+  password_hash: string;
+  role: UserRole;
+  status: 'ACTIVE' | 'INACTIVE';
+  created_at?: string;
+  updated_at?: string;
 }
 
-interface DatabaseSchema {
-  users: User[];
+interface ScopeBundle {
+  settings: Record<string, any>;
   students: Student[];
   transactions: Transaction[];
-  settings: AppSettings;
-  sessions: SessionData[];
+  section: ClassSection;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'tabungan_data.json');
+interface CacheEntry<T> { value: T; expiresAt: number; }
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+export interface ResolvedScope {
+  section: ClassSection | null;
+  academicYear: string;
+  classId: string;
 }
 
-// Initial default settings
-const defaultSettings: AppSettings = {
-  school_name: 'MI Islam Terpadu Al-Uswah Pasirian',
-  school_logo: '',
-  academic_year: '2026/2027',
-  currency: 'IDR',
-  minimum_deposit: 1000,
-  maximum_deposit: 5000000,
-  maximum_withdrawal: 5000000,
-  class_id: '5C',
-  class_name: '5C',
-  teacher_name: 'Jefri Eka Anggara Putra, S.Pd',
-  gas_script_url: 'https://script.google.com/macros/s/AKfycbw098797ZSZS8NTg_Ksez8CGBNwDbsq2uody9RBJTN9pIorj4kAFrJ7-HIc8ccMDxEstw/exec'
-};
+function normalizeRole(_value?: unknown): UserRole {
+  return 'GURU';
+}
 
-// Initial default user (Wali Kelas)
-const defaultUsers: User[] = [
-  {
-    user_id: 'USR-001',
-    username: 'uje',
-    name: 'Jefri Eka Anggara Putra, S.Pd',
-    password_hash: 'uje321',
-    class_id: '5C',
-    status: 'ACTIVE',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+function normalizeRemoteDate(value: unknown): string {
+  if (!value) return getJakartaToday();
+  const clean = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  const indo = clean.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (indo) return `${indo[3]}-${indo[2]}-${indo[1]}`;
+  const parsed = new Date(clean);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(parsed);
   }
-];
+  return getJakartaToday();
+}
 
-// Clean empty initial state (no mock data, 100% sourced from Google Sheets)
-const initialStudents: Student[] = [];
-const initialTransactions: Transaction[] = [];
+export class DatabaseService {
+  private accessCache = new Map<string, CacheEntry<AccessProfile>>();
+  private scopeCache = new Map<string, CacheEntry<ScopeBundle>>();
+  private pendingAccessPromises = new Map<string, Promise<AccessProfile>>();
+  private pendingScopePromises = new Map<string, Promise<ScopeBundle>>();
 
-class DatabaseManager {
-  private memoryData: DatabaseSchema;
-  private isWriting = false;
-  private lockQueue: Array<() => void> = [];
-  private syncTimer: NodeJS.Timeout | null = null;
-
-  constructor() {
-    this.memoryData = this.loadData();
-    // Automatically perform initial sync with Google Sheets on startup
-    this.initRealtimeSync();
+  private getCache<T>(map: Map<string, CacheEntry<T>>, key: string): T | null {
+    const hit = map.get(key);
+    if (!hit) return null;
+    if (Date.now() > hit.expiresAt) { map.delete(key); return null; }
+    return hit.value;
   }
 
-  private initRealtimeSync(): void {
-    if (this.memoryData.settings.gas_script_url) {
-      setTimeout(() => {
-        this.syncFromGas().catch((err) => {
-          console.warn('Initial background sync from Google Sheets notice:', err.message);
-        });
-      }, 1000);
+  private setCache<T>(map: Map<string, CacheEntry<T>>, key: string, value: T): T {
+    map.set(key, { value, expiresAt: Date.now() + CONFIG.CACHE_TTL_MS });
+    return value;
+  }
 
-      // Periodic background polling (every 45s) to guarantee real-time sync with Google Sheets
-      if (!this.syncTimer) {
-        this.syncTimer = setInterval(() => {
-          if (this.memoryData.settings.gas_script_url && !this.isWriting) {
-            this.syncFromGas().catch(() => {});
-          }
-        }, 45000);
+  private clearUserCache(userId?: string): void {
+    if (!userId) {
+      this.accessCache.clear();
+      this.scopeCache.clear();
+      this.pendingAccessPromises.clear();
+      this.pendingScopePromises.clear();
+      return;
+    }
+    this.accessCache.delete(userId);
+    this.pendingAccessPromises.delete(userId);
+    for (const key of Array.from(this.scopeCache.keys())) {
+      if (key.startsWith(`${userId}|`)) {
+        this.scopeCache.delete(key);
+        this.pendingScopePromises.delete(key);
       }
     }
   }
 
-  private loadData(): DatabaseSchema {
+  public async callGasApi<T = any>(
+    action: string,
+    data: any = {},
+    context?: { user_id?: string; role?: UserRole; active_class_section_id?: string }
+  ): Promise<T> {
+    const gasUrl = CONFIG.GAS_SCRIPT_URL;
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(gasUrl)) throw new Error('GAS_SCRIPT_URL_NOT_CONFIGURED: URL Google Apps Script tidak valid.');
+    const payload = {
+      action,
+      secret: CONFIG.GAS_API_SECRET,
+      context: {
+        user_id: context?.user_id || '',
+        role: context?.role || '',
+        active_class_section_id: context?.active_class_section_id || '',
+        max_transaction_amount: CONFIG.MAX_TRANSACTION_AMOUNT
+      },
+      data
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 28_000);
     try {
-      if (fs.existsSync(DATA_FILE)) {
-        const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-        return JSON.parse(raw);
-      }
-    } catch (err) {
-      console.error('Error loading data file, initializing defaults:', err);
-    }
-    const defaultData: DatabaseSchema = {
-      users: defaultUsers,
-      students: initialStudents,
-      transactions: initialTransactions,
-      settings: defaultSettings,
-      sessions: []
-    };
-    this.saveDataDirect(defaultData);
-    return defaultData;
-  }
-
-  private saveDataDirect(data: DatabaseSchema): void {
-    try {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('Failed to save data file:', err);
-    }
-  }
-
-  // Mutex Lock for concurrency safety on financial operations
-  public async acquireLock(): Promise<() => void> {
-    return new Promise((resolve) => {
-      const run = () => {
-        this.isWriting = true;
-        resolve(() => {
-          this.isWriting = false;
-          this.persist();
-          const next = this.lockQueue.shift();
-          if (next) {
-            next();
-          }
-        });
-      };
-
-      if (!this.isWriting) {
-        run();
-      } else {
-        this.lockQueue.push(run);
-      }
-    });
-  }
-
-  public persist(): void {
-    this.saveDataDirect(this.memoryData);
-  }
-
-  // Reset to demo data
-  public resetToDefault(): void {
-    this.memoryData = {
-      users: defaultUsers,
-      students: initialStudents,
-      transactions: initialTransactions,
-      settings: defaultSettings,
-      sessions: []
-    };
-    this.persist();
-  }
-
-  // ==========================
-  // SOURCE OF TRUTH: CALCULATE BALANCE
-  // ==========================
-  public calculateStudentBalance(studentId: string): {
-    balance: number;
-    totalDeposit: number;
-    totalWithdrawal: number;
-    transactionCount: number;
-  } {
-    const studentTrx = this.memoryData.transactions.filter(
-      (t) => t.student_id === studentId && t.status === 'ACTIVE'
-    );
-
-    let totalDeposit = 0;
-    let totalWithdrawal = 0;
-
-    for (const trx of studentTrx) {
-      if (trx.transaction_type === 'SETORAN') {
-        totalDeposit += trx.amount;
-      } else if (trx.transaction_type === 'PENARIKAN') {
-        totalWithdrawal += trx.amount;
-      } else if (trx.transaction_type === 'KOREKSI') {
-        if (trx.amount >= 0) {
-          totalDeposit += trx.amount;
-        } else {
-          totalWithdrawal += Math.abs(trx.amount);
-        }
-      }
-    }
-
-    const balance = totalDeposit - totalWithdrawal;
-    return {
-      balance,
-      totalDeposit,
-      totalWithdrawal,
-      transactionCount: studentTrx.length
-    };
-  }
-
-  // ==========================
-  // AUTH & SESSIONS
-  // ==========================
-  private createSession(user: User): { session: SessionData; user: User } {
-    const sessionId = `SES-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
-
-    const session: SessionData = {
-      session_id: sessionId,
-      user_id: user.user_id,
-      token_hash: sessionId,
-      created_at: new Date().toISOString(),
-      expires_at: expiresAt,
-      status: 'ACTIVE'
-    };
-
-    this.memoryData.sessions.push(session);
-    this.persist();
-
-    return { session, user };
-  }
-
-  public async loginUser(username: string, passwordPlain: string): Promise<{ session: SessionData; user: User } | null> {
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanPassword = passwordPlain.trim();
-    const gasUrl = this.memoryData.settings.gas_script_url;
-
-    // 1. If Google Apps Script is configured, trigger a real-time sync first
-    // so credentials & student/transaction records are guaranteed to be from Google Sheets
-    if (gasUrl && gasUrl.startsWith('http')) {
-      try {
-        await this.syncFromGas().catch(() => {});
-      } catch (err) {
-        console.warn('Real-time sync on login notice:', err);
-      }
-    }
-
-    // 2. Try local memory match (which has been synced from Google Sheets)
-    const localUser = this.memoryData.users.find(
-      (u) => u.username.toLowerCase() === cleanUsername && u.status === 'ACTIVE'
-    );
-
-    if (localUser && localUser.password_hash === cleanPassword) {
-      return this.createSession(localUser);
-    }
-
-    // 3. Direct Google Apps Script login action fallback
-    if (gasUrl && gasUrl.startsWith('http')) {
-      try {
-        const gasLoginRes = await fetch(gasUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'login',
-            username: username.trim(),
-            password: cleanPassword
-          }),
-          redirect: 'follow'
-        });
-
-        if (gasLoginRes.ok) {
-          const json = (await gasLoginRes.json()) as any;
-          if (json && json.success && json.data && json.data.user) {
-            const gasUser = json.data.user;
-            const syncedUser: User = {
-              user_id: gasUser.user_id || `USR-${Date.now()}`,
-              username: gasUser.username || username.trim(),
-              name: gasUser.name || 'Jefri Eka Anggara Putra, S.Pd',
-              password_hash: cleanPassword,
-              class_id: gasUser.class_id || '5C',
-              status: 'ACTIVE',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            };
-
-            const existingIdx = this.memoryData.users.findIndex(
-              (u) => u.username.toLowerCase() === cleanUsername
-            );
-            if (existingIdx >= 0) {
-              this.memoryData.users[existingIdx] = syncedUser;
-            } else {
-              this.memoryData.users.push(syncedUser);
-            }
-            this.persist();
-
-            // Run full sync to populate students and transactions immediately
-            await this.syncFromGas().catch(() => {});
-
-            return this.createSession(syncedUser);
-          }
-        }
-      } catch (err) {
-        console.error('GAS direct login error:', err);
-      }
-    }
-
-    return null;
-  }
-
-  public validateSession(sessionId: string): User | null {
-    const session = this.memoryData.sessions.find(
-      (s) => s.session_id === sessionId && s.status === 'ACTIVE'
-    );
-    if (!session) return null;
-
-    if (new Date(session.expires_at) < new Date()) {
-      session.status = 'EXPIRED';
-      this.persist();
-      return null;
-    }
-
-    const user = this.memoryData.users.find((u) => u.user_id === session.user_id && u.status === 'ACTIVE');
-    return user || null;
-  }
-
-  public logoutSession(sessionId: string): void {
-    const session = this.memoryData.sessions.find((s) => s.session_id === sessionId);
-    if (session) {
-      session.status = 'EXPIRED';
-      this.persist();
-    }
-  }
-
-  // ==========================
-  // GAS PUSH HELPER
-  // ==========================
-  public async pushToGas(action: string, data: any): Promise<any> {
-    const gasUrl = this.memoryData.settings.gas_script_url;
-    if (!gasUrl || !gasUrl.startsWith('http')) return null;
-
-    try {
-      const res = await fetch(gasUrl, {
+      const response = await fetch(gasUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, data }),
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
         redirect: 'follow'
       });
-      if (res.ok) {
-        return await res.json();
+      if (!response.ok) throw new Error(`Google Apps Script HTTP ${response.status}: ${response.statusText}`);
+      const text = await response.text();
+      let json: ApiResponse<T>;
+      try { json = JSON.parse(text); } catch { throw new Error(`Respons Google Apps Script bukan JSON valid: ${text.slice(0, 160)}`); }
+      if (!json.success) {
+        const err = new Error(json.error?.message || 'Permintaan Google Apps Script gagal.');
+        (err as any).code = json.error?.code || 'GAS_ERROR';
+        throw err;
       }
-    } catch (err) {
-      console.warn(`[pushToGas] Failed to push action '${action}' to Google Apps Script:`, err);
+      return json.data as T;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') throw new Error('Koneksi Google Apps Script timeout (>28 detik).');
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-    return null;
   }
 
-  // ==========================
-  // STUDENTS CRUD
-  // ==========================
-  public getStudents(filterStatus?: 'ALL' | 'ACTIVE' | 'INACTIVE', search?: string): Student[] {
-    let result = this.memoryData.students;
-
-    if (filterStatus && filterStatus !== 'ALL') {
-      result = result.filter((s) => s.status === filterStatus);
-    }
-
-    if (search && search.trim()) {
-      const q = search.trim().toLowerCase();
-      result = result.filter(
-        (s) =>
-          s.nama.toLowerCase().includes(q) ||
-          s.nisn.toLowerCase().includes(q) ||
-          (s.no_hp_wali && s.no_hp_wali.toLowerCase().includes(q))
-      );
-    }
-
-    // Attach calculated financial fields
-    return result.map((student) => {
-      const metrics = this.calculateStudentBalance(student.student_id);
-      return {
-        ...student,
-        balance: metrics.balance,
-        totalDeposit: metrics.totalDeposit,
-        totalWithdrawal: metrics.totalWithdrawal,
-        transactionCount: metrics.transactionCount
-      };
-    });
+  public async getAuthRecordByUsername(usernameInput: string): Promise<AuthRecord> {
+    const username = sanitizeText(usernameInput, 100);
+    if (!username) throw new Error('Username wajib diisi.');
+    return this.callGasApi<AuthRecord>('getAuthUser', { username });
   }
 
-  public getStudentById(studentId: string): Student | null {
-    const student = this.memoryData.students.find((s) => s.student_id === studentId || s.nisn === studentId);
-    if (!student) return null;
+  public async getAccessProfile(userId: string, role: UserRole, force = false): Promise<AccessProfile> {
+    if (!force) {
+      const cached = this.getCache(this.accessCache, userId);
+      if (cached) return cached;
+      const inFlight = this.pendingAccessPromises.get(userId);
+      if (inFlight) return inFlight;
+    }
 
-    const metrics = this.calculateStudentBalance(student.student_id);
+    const fetchPromise = (async () => {
+      try {
+        const profile = await this.callGasApi<AccessProfile>('getAccessProfile', {}, { user_id: userId, role });
+        const normalized: AccessProfile = {
+          user_id: String(profile.user_id || userId),
+          username: sanitizeText(profile.username, 100),
+          user_name: sanitizeText(profile.user_name, 100),
+          role: normalizeRole(profile.role || role),
+          academic_years: Array.isArray(profile.academic_years) ? Array.from(new Set(profile.academic_years.map(String).filter(Boolean))) : [],
+          classes_by_year: profile.classes_by_year && typeof profile.classes_by_year === 'object' ? profile.classes_by_year : {},
+          class_sections: Array.isArray(profile.class_sections) ? profile.class_sections.map((s: any): ClassSection => ({
+            class_section_id: String(s.class_section_id || ''),
+            academic_year_id: String(s.academic_year_id || ''),
+            academic_year: String(s.academic_year || ''),
+            class_name: String(s.class_name || ''),
+            status: String(s.status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+            academic_year_is_active: Boolean(s.academic_year_is_active),
+            created_at: s.created_at || '',
+            updated_at: s.updated_at || ''
+          })).filter((s: ClassSection) => !!s.class_section_id && !!s.academic_year && !!s.class_name) : [],
+          assignments: Array.isArray(profile.assignments) ? profile.assignments : []
+        };
+        return this.setCache(this.accessCache, userId, normalized);
+      } finally {
+        this.pendingAccessPromises.delete(userId);
+      }
+    })();
+
+    this.pendingAccessPromises.set(userId, fetchPromise);
+    return fetchPromise;
+  }
+
+  public resolveScope(profile: AccessProfile, requestedYear?: string, requestedClass?: string): ResolvedScope {
+    const sections = profile.class_sections.filter((s) => s.status === 'ACTIVE');
+    if (!sections.length) return { section: null, academicYear: '', classId: '' };
+    const year = String(requestedYear || '').trim();
+    const cls = String(requestedClass || '').trim();
+    let section = sections.find((s) => (!year || s.academic_year === year) && (!cls || s.class_name === cls));
+    if (!section && year) section = sections.find((s) => s.academic_year === year);
+    if (!section) section = sections[0];
+    return { section, academicYear: section.academic_year, classId: section.class_name };
+  }
+
+  private buildUser(record: AuthRecord, profile: AccessProfile, scope?: ResolvedScope): User {
+    const selected = scope || this.resolveScope(profile);
+    const years = profile.academic_years.length ? profile.academic_years : Array.from(new Set(profile.class_sections.map((s) => s.academic_year)));
+    const classes = selected.academicYear ? profile.class_sections.filter((s) => s.academic_year === selected.academicYear && s.status === 'ACTIVE').map((s) => s.class_name) : [];
     return {
-      ...student,
-      balance: metrics.balance,
-      totalDeposit: metrics.totalDeposit,
-      totalWithdrawal: metrics.totalWithdrawal,
-      transactionCount: metrics.transactionCount
+      user_id: record.user_id,
+      username: record.username,
+      name: record.name,
+      role: record.role,
+      academic_years: years,
+      class_sections: profile.class_sections,
+      active_academic_year: selected.academicYear,
+      class_ids: Array.from(new Set(classes)),
+      active_class_id: selected.classId,
+      active_class_section_id: selected.section?.class_section_id || '',
+      class_id: selected.classId,
+      status: record.status,
+      created_at: record.created_at || '',
+      updated_at: record.updated_at || ''
     };
   }
 
-  public createStudent(data: Omit<Student, 'student_id' | 'created_at' | 'updated_at'>): Student {
-    const nisnId = String(data.nisn || `NISN-${Date.now().toString().slice(-6)}`).trim();
-    const now = new Date().toISOString();
+  public async loginUser(usernameInput: string, passwordInput: string): Promise<{ user: User; signedToken: string; expiresAt: number }> {
+    const username = sanitizeText(usernameInput, 100);
+    const password = String(passwordInput || '');
+    if (!username || !password) throw new Error('Username dan password wajib diisi.');
+    const record = await this.getAuthRecordByUsername(username);
+    if (!record || record.status !== 'ACTIVE' || !verifyPassword(password, record.password_hash)) throw new Error('Username atau password salah.');
+    const role = normalizeRole(record.role);
+    const profile = await this.getAccessProfile(record.user_id, role, true);
+    const user = this.buildUser({ ...record, role }, profile);
+    const signedToken = createSignedSessionToken(record.user_id, record.username, role);
+    return { user, signedToken, expiresAt: Date.now() + CONFIG.SESSION_TTL_SECONDS * 1000 };
+  }
 
-    const newStudent: Student = {
-      ...data,
-      student_id: nisnId,
-      nisn: nisnId,
-      status: data.status || 'ACTIVE',
-      created_at: now,
-      updated_at: now
+  public async getSessionUser(
+    decoded: { userId: string; username: string; role: UserRole },
+    requestedYear?: string,
+    requestedClass?: string
+  ): Promise<User> {
+    const profile = await this.getAccessProfile(decoded.userId, decoded.role);
+    if (profile.role !== decoded.role) throw new Error('SESSION_ROLE_CHANGED: Role akun berubah. Silakan login kembali.');
+    const record: AuthRecord = {
+      user_id: decoded.userId,
+      username: profile.username || decoded.username,
+      name: profile.user_name || decoded.username,
+      password_hash: '',
+      role: profile.role,
+      status: 'ACTIVE'
     };
-
-    this.memoryData.students.push(newStudent);
-    this.persist();
-
-    // Push to Google Sheets
-    if (this.memoryData.settings.gas_script_url) {
-      this.pushToGas('createStudent', newStudent).catch((e) => console.warn('Push createStudent to GAS error:', e));
-    }
-
-    return this.getStudentById(nisnId)!;
+    return this.buildUser(record, profile, this.resolveScope(profile, requestedYear, requestedClass));
   }
 
-  public updateStudent(studentId: string, updates: Partial<Student>): Student | null {
-    const idx = this.memoryData.students.findIndex((s) => s.student_id === studentId || s.nisn === studentId);
-    if (idx === -1) return null;
+  private async getScopeBundle(user: User, force = false): Promise<ScopeBundle> {
+    if (!user.active_class_section_id) throw new Error('NO_CLASS_ASSIGNMENT: Akun belum memiliki kelas yang dapat diakses.');
+    const key = `${user.user_id}|${user.active_class_section_id}`;
+    if (!force) {
+      const cached = this.getCache(this.scopeCache, key);
+      if (cached) return cached;
+      const inFlight = this.pendingScopePromises.get(key);
+      if (inFlight) return inFlight;
+    }
 
-    const current = this.memoryData.students[idx];
-    const updated: Student = {
-      ...current,
-      ...updates,
-      student_id: current.student_id, // Immutable
-      updated_at: new Date().toISOString()
+    const fetchPromise = (async () => {
+      try {
+        const remote = await this.callGasApi<any>('getScopeData', {}, {
+          user_id: user.user_id,
+          role: user.role,
+          active_class_section_id: user.active_class_section_id
+        });
+        const section: ClassSection = {
+          class_section_id: String(remote?.section?.class_section_id || user.active_class_section_id),
+          academic_year_id: String(remote?.section?.academic_year_id || ''),
+          academic_year: String(remote?.section?.academic_year || user.active_academic_year),
+          class_name: String(remote?.section?.class_name || user.active_class_id),
+          status: 'ACTIVE'
+        };
+        const students: Student[] = Array.isArray(remote?.students) ? remote.students.map((s: any) => ({
+          student_id: String(s.nisn || s.student_id || '').replace(/^'/, '').trim(),
+          enrollment_id: String(s.enrollment_id || ''),
+          class_section_id: section.class_section_id,
+          nisn: String(s.nisn || '').replace(/^'/, '').trim(),
+          nama: sanitizeText(s.nama, 100),
+          jenis_kelamin: s.jenis_kelamin === 'P' ? 'P' : 'L',
+          academic_year: section.academic_year,
+          kelas: section.class_name,
+          no_hp_wali: sanitizeText(s.no_hp_wali, 30),
+          status: String(s.status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+          enrollment_status: String(s.enrollment_status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+          created_at: s.created_at || '',
+          updated_at: s.updated_at || '',
+          balance: Number(s.balance) || 0,
+          totalDeposit: Number(s.totalDeposit) || 0,
+          totalWithdrawal: Number(s.totalWithdrawal) || 0,
+          transactionCount: Number(s.transactionCount) || 0,
+          ledgerError: Number(s.balance) < 0
+        })) : [];
+        const transactions: Transaction[] = Array.isArray(remote?.transactions) ? remote.transactions.map((t: any) => ({
+          transaction_id: String(t.transaction_id || ''),
+          enrollment_id: String(t.enrollment_id || ''),
+          student_id: String(t.nisn || '').replace(/^'/, '').trim(),
+          nisn: String(t.nisn || '').replace(/^'/, '').trim(),
+          nama: sanitizeText(t.nama, 100),
+          class_section_id: String(t.class_section_id || section.class_section_id),
+          academic_year: String(t.academic_year || section.academic_year),
+          kelas: String(t.class_name || t.kelas || section.class_name),
+          transaction_type: String(t.transaction_type || '').toUpperCase() === 'PENARIKAN' ? 'PENARIKAN' : 'SETORAN',
+          amount: Number(t.amount) || 0,
+          transaction_date: normalizeRemoteDate(t.transaction_date),
+          description: sanitizeText(t.description, 200),
+          created_by_user_id: String(t.created_by_user_id || ''),
+          created_by: sanitizeText(t.created_by_name || t.created_by, 100),
+          created_at: t.created_at || '',
+          updated_at: t.updated_at || '',
+          status: String(t.status || 'ACTIVE').toUpperCase() === 'VOID' ? 'VOID' : 'ACTIVE',
+          void_reason: sanitizeText(t.void_reason, 250),
+          voided_by_user_id: String(t.voided_by_user_id || ''),
+          voided_by: sanitizeText(t.voided_by_name || '', 100),
+          voided_at: t.voided_at || ''
+        })) : [];
+        const bundle: ScopeBundle = { settings: remote?.settings || {}, students, transactions, section };
+        return this.setCache(this.scopeCache, key, bundle);
+      } finally {
+        this.pendingScopePromises.delete(key);
+      }
+    })();
+
+    this.pendingScopePromises.set(key, fetchPromise);
+    return fetchPromise;
+  }
+
+  public async getStudents(user: User): Promise<Student[]> {
+    return (await this.getScopeBundle(user)).students.map((s) => ({ ...s }));
+  }
+
+  public async getStudentById(id: string, user: User): Promise<Student | null> {
+    const clean = String(id || '').replace(/^'/, '').trim();
+    return (await this.getScopeBundle(user)).students.find((s) => s.student_id === clean || s.nisn === clean) || null;
+  }
+
+  public async createStudent(studentData: Partial<Student>, user: User): Promise<Student> {
+    const n = validateNisn(studentData.nisn); if (!n.valid) throw new Error(n.error);
+    if (!user.active_class_section_id) throw new Error('NO_CLASS_ASSIGNMENT: Pilih kelas terlebih dahulu.');
+    const payload = {
+      nisn: n.cleanNisn,
+      nama: sanitizeText(studentData.nama, 100),
+      jenis_kelamin: studentData.jenis_kelamin === 'P' ? 'P' : 'L',
+      no_hp_wali: sanitizeText(studentData.no_hp_wali, 30)
     };
-
-    this.memoryData.students[idx] = updated;
-    this.persist();
-
-    // Push to Google Sheets
-    if (this.memoryData.settings.gas_script_url) {
-      this.pushToGas('updateStudent', updated).catch((e) => console.warn('Push updateStudent to GAS error:', e));
-    }
-
-    return this.getStudentById(current.student_id);
+    if (!payload.nama) throw new Error('Nama siswa wajib diisi.');
+    const saved = await this.callGasApi<Student>('createStudentEnrollment', payload, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
+    this.clearUserCache(user.user_id);
+    return { ...saved, student_id: saved.nisn || n.cleanNisn };
   }
 
-  public deleteOrDeactivateStudent(studentId: string): { mode: 'DELETED' | 'DEACTIVATED'; student: Student | null } {
-    const idx = this.memoryData.students.findIndex((s) => s.student_id === studentId || s.nisn === studentId);
-    if (idx === -1) return { mode: 'DEACTIVATED', student: null };
-
-    const targetStudentId = this.memoryData.students[idx].student_id;
-
-    // Check if student has transactions
-    const hasTransactions = this.memoryData.transactions.some((t) => t.student_id === targetStudentId || t.student_id === studentId);
-
-    // Push to Google Sheets
-    if (this.memoryData.settings.gas_script_url) {
-      this.pushToGas('deleteStudent', { student_id: targetStudentId }).catch((e) => console.warn('Push deleteStudent to GAS error:', e));
-    }
-
-    if (hasTransactions) {
-      // Soft delete / Deactivate to protect financial integrity
-      this.memoryData.students[idx].status = 'INACTIVE';
-      this.memoryData.students[idx].updated_at = new Date().toISOString();
-      this.persist();
-      return { mode: 'DEACTIVATED', student: this.getStudentById(targetStudentId) };
-    } else {
-      // Hard delete allowed only if completely untouched
-      const removed = this.memoryData.students.splice(idx, 1)[0];
-      this.persist();
-      return { mode: 'DELETED', student: removed };
-    }
+  public async updateStudent(id: string, updates: Partial<Student>, user: User): Promise<Student> {
+    const current = await this.getStudentById(id, user);
+    if (!current) throw new Error('STUDENT_NOT_FOUND: Siswa tidak ditemukan pada kelas aktif.');
+    if (updates.nisn && String(updates.nisn).trim() !== current.nisn) throw new Error('NISN_IMMUTABLE: NISN tidak dapat diubah.');
+    const payload = {
+      nisn: current.nisn,
+      nama: updates.nama !== undefined ? sanitizeText(updates.nama, 100) : current.nama,
+      jenis_kelamin: updates.jenis_kelamin === 'P' ? 'P' : updates.jenis_kelamin === 'L' ? 'L' : current.jenis_kelamin,
+      no_hp_wali: updates.no_hp_wali !== undefined ? sanitizeText(updates.no_hp_wali, 30) : current.no_hp_wali
+    };
+    const saved = await this.callGasApi<Student>('updateStudentMaster', payload, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
+    this.clearUserCache(user.user_id);
+    return { ...current, ...saved, student_id: current.nisn, nisn: current.nisn };
   }
 
-  // ==========================
-  // TRANSACTIONS
-  // ==========================
-  public getTransactions(filters?: {
-    student_id?: string;
-    type?: string;
-    startDate?: string;
-    endDate?: string;
-    status?: string;
-    limit?: number;
-  }): Transaction[] {
-    let result = [...this.memoryData.transactions];
-
-    if (filters?.student_id) {
-      result = result.filter((t) => t.student_id === filters.student_id);
-    }
-    if (filters?.type && filters.type !== 'ALL') {
-      result = result.filter((t) => t.transaction_type === filters.type);
-    }
-    if (filters?.status && filters.status !== 'ALL') {
-      result = result.filter((t) => t.status === filters.status);
-    }
-    if (filters?.startDate) {
-      result = result.filter((t) => t.transaction_date >= filters.startDate!);
-    }
-    if (filters?.endDate) {
-      result = result.filter((t) => t.transaction_date <= filters.endDate!);
-    }
-
-    // Sort newest first
-    result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    if (filters?.limit && filters.limit > 0) {
-      result = result.slice(0, filters.limit);
-    }
-
-    // Populate student virtual fields
-    return result.map((trx) => {
-      const student = this.memoryData.students.find((s) => s.student_id === trx.student_id || s.nisn === trx.student_id);
-      return {
-        ...trx,
-        student_nama: student?.nama || 'Siswa Dihapus',
-        student_nisn: student?.nisn || '-',
-        student_kelas: student?.kelas || '-'
-      };
-    });
+  public async deleteStudent(id: string, user: User): Promise<void> {
+    const current = await this.getStudentById(id, user);
+    if (!current) throw new Error('STUDENT_NOT_FOUND: Siswa tidak ditemukan pada kelas aktif.');
+    await this.callGasApi('deactivateEnrollment', { enrollment_id: current.enrollment_id, nisn: current.nisn }, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
+    this.clearUserCache(user.user_id);
   }
 
-  public async createDeposit(params: {
-    student_id: string;
-    amount: number;
-    description?: string;
-    created_by?: string;
-    transaction_date?: string;
-  }): Promise<{ transaction: Transaction; newBalance: number }> {
-    const release = await this.acquireLock();
-    try {
-      const student = this.memoryData.students.find((s) => s.student_id === params.student_id || s.nisn === params.student_id);
-      if (!student) {
-        throw new Error('STUDENT_NOT_FOUND');
-      }
+  public async getTransactions(user: User, filter?: string | { studentId?: string; limit?: number; cursor?: string }): Promise<Transaction[]> {
+    const studentId = typeof filter === 'string' ? filter : filter?.studentId;
+    const limit = typeof filter === 'object' && filter?.limit ? filter.limit : undefined;
+    const cursor = typeof filter === 'object' && filter?.cursor ? filter.cursor : undefined;
 
-      if (!params.amount || params.amount <= 0) {
-        throw new Error('INVALID_AMOUNT');
-      }
-
-      const today = params.transaction_date || new Date().toISOString().split('T')[0];
-      const now = new Date().toISOString();
-      const dateCompact = today.replace(/-/g, '');
-      const countToday = this.memoryData.transactions.filter((t) => t.transaction_date === today).length + 1;
-      const trxId = `TRX-${dateCompact}-${String(countToday).padStart(3, '0')}`;
-
-      const newTrx: Transaction = {
-        transaction_id: trxId,
-        student_id: student.student_id,
-        nisn: student.nisn,
-        nama: student.nama,
-        transaction_type: 'SETORAN',
-        amount: Math.round(params.amount),
-        transaction_date: today,
-        description: params.description?.trim() || 'Setoran Tabungan',
-        created_by: params.created_by || this.memoryData.settings.teacher_name,
-        created_at: now,
-        updated_at: now,
-        status: 'ACTIVE'
-      };
-
-      this.memoryData.transactions.push(newTrx);
-      this.persist();
-
-      // Push to Google Sheets
-      if (this.memoryData.settings.gas_script_url) {
-        this.pushToGas('createDeposit', {
-          transaction_id: newTrx.transaction_id,
-          student_id: student.student_id,
-          nisn: student.nisn,
-          nama: student.nama,
-          amount: newTrx.amount,
-          description: newTrx.description,
-          created_by: newTrx.created_by,
-          transaction_date: newTrx.transaction_date
-        }).catch((e) => console.warn('Push createDeposit to GAS error:', e));
-      }
-
-      const metrics = this.calculateStudentBalance(student.student_id);
-
-      return {
-        transaction: {
-          ...newTrx,
-          student_nama: student.nama,
-          student_nisn: student.nisn,
-          student_kelas: student.kelas
-        },
-        newBalance: metrics.balance
-      };
-    } finally {
-      release();
+    let rows = (await this.getScopeBundle(user)).transactions;
+    if (studentId) {
+      const clean = String(studentId).replace(/^'/, '').trim();
+      const cleanNoZero = clean.replace(/^0+/, '');
+      rows = rows.filter((t) => {
+        const tSid = String(t.student_id || '').replace(/^'/, '').trim();
+        const tNisn = String(t.nisn || '').replace(/^'/, '').trim();
+        const tEnroll = String(t.enrollment_id || '').replace(/^'/, '').trim();
+        return (
+          tSid === clean ||
+          tNisn === clean ||
+          tEnroll === clean ||
+          (cleanNoZero && tSid.replace(/^0+/, '') === cleanNoZero) ||
+          (cleanNoZero && tNisn.replace(/^0+/, '') === cleanNoZero)
+        );
+      });
     }
+    const sorted = rows.map((t) => ({ ...t })).sort((a, b) => `${b.transaction_date}|${b.created_at}`.localeCompare(`${a.transaction_date}|${a.created_at}`));
+    if (cursor) {
+      const idx = sorted.findIndex((t) => t.transaction_id === cursor || `${t.transaction_date}|${t.created_at}` < cursor);
+      if (idx !== -1) {
+        return sorted.slice(idx, limit ? idx + limit : undefined);
+      }
+    }
+    if (limit && limit > 0) {
+      return sorted.slice(0, limit);
+    }
+    return sorted;
   }
 
-  public async createWithdrawal(params: {
-    student_id: string;
-    amount: number;
-    description?: string;
-    created_by?: string;
-    transaction_date?: string;
-  }): Promise<{ transaction: Transaction; newBalance: number }> {
-    const release = await this.acquireLock();
-    try {
-      const student = this.memoryData.students.find((s) => s.student_id === params.student_id || s.nisn === params.student_id);
-      if (!student) {
-        throw new Error('STUDENT_NOT_FOUND');
-      }
+  private async createTransaction(type: TransactionType, params: { student_id: string; amount: number; transaction_date?: string; description?: string }, user: User): Promise<TransactionMutationResult> {
+    const student = await this.getStudentById(params.student_id, user);
+    if (!student || student.status !== 'ACTIVE' || student.enrollment_status === 'INACTIVE') throw new Error('STUDENT_NOT_ACTIVE: Siswa tidak aktif pada kelas ini.');
+    const amountCheck = validateFinancialAmount(params.amount, 1000, CONFIG.MAX_TRANSACTION_AMOUNT); if (!amountCheck.valid) throw new Error(amountCheck.error);
+    const dateCheck = validateTransactionDate(params.transaction_date); if (!dateCheck.valid) throw new Error(dateCheck.error);
+    const data = {
+      transaction_id: crypto.randomUUID(),
+      enrollment_id: student.enrollment_id,
+      nisn: student.nisn,
+      transaction_type: type,
+      amount: amountCheck.numAmount,
+      transaction_date: dateCheck.cleanDate,
+      description: sanitizeText(params.description || (type === 'SETORAN' ? 'Setoran Tabungan' : 'Penarikan Tabungan'), 200)
+    };
+    const result = await this.callGasApi<any>('processTransaction', data, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
+    this.clearUserCache(user.user_id);
 
-      if (!params.amount || params.amount <= 0) {
-        throw new Error('INVALID_AMOUNT');
-      }
+    const today = getJakartaToday();
+    const isToday = dateCheck.cleanDate === today;
+    const amount = amountCheck.numAmount;
+    const totalBalanceDelta = type === 'SETORAN' ? amount : -amount;
+    const todayDepositDelta = type === 'SETORAN' && isToday ? amount : 0;
+    const todayWithdrawalDelta = type === 'PENARIKAN' && isToday ? amount : 0;
 
-      const currentMetrics = this.calculateStudentBalance(student.student_id);
-      if (params.amount > currentMetrics.balance) {
-        throw new Error('INSUFFICIENT_BALANCE');
-      }
-
-      const today = params.transaction_date || new Date().toISOString().split('T')[0];
-      const now = new Date().toISOString();
-      const dateCompact = today.replace(/-/g, '');
-      const countToday = this.memoryData.transactions.filter((t) => t.transaction_date === today).length + 1;
-      const trxId = `TRX-${dateCompact}-${String(countToday).padStart(3, '0')}`;
-
-      const newTrx: Transaction = {
-        transaction_id: trxId,
-        student_id: student.student_id,
-        nisn: student.nisn,
-        nama: student.nama,
-        transaction_type: 'PENARIKAN',
-        amount: Math.round(params.amount),
-        transaction_date: today,
-        description: params.description?.trim() || 'Penarikan Tabungan',
-        created_by: params.created_by || this.memoryData.settings.teacher_name,
-        created_at: now,
-        updated_at: now,
-        status: 'ACTIVE'
-      };
-
-      this.memoryData.transactions.push(newTrx);
-      this.persist();
-
-      // Push to Google Sheets
-      if (this.memoryData.settings.gas_script_url) {
-        this.pushToGas('createWithdrawal', {
-          transaction_id: newTrx.transaction_id,
-          student_id: student.student_id,
-          nisn: student.nisn,
-          nama: student.nama,
-          amount: newTrx.amount,
-          description: newTrx.description,
-          created_by: newTrx.created_by,
-          transaction_date: newTrx.transaction_date
-        }).catch((e) => console.warn('Push createWithdrawal to GAS error:', e));
-      }
-
-      const metrics = this.calculateStudentBalance(student.student_id);
-
-      return {
-        transaction: {
-          ...newTrx,
-          student_nama: student.nama,
-          student_nisn: student.nisn,
-          student_kelas: student.kelas
-        },
-        newBalance: metrics.balance
-      };
-    } finally {
-      release();
-    }
-  }
-
-  public async voidTransaction(transactionId: string, reason?: string): Promise<{ transaction: Transaction; newBalance: number }> {
-    const release = await this.acquireLock();
-    try {
-      const trx = this.memoryData.transactions.find((t) => t.transaction_id === transactionId);
-      if (!trx) {
-        throw new Error('TRANSACTION_NOT_FOUND');
-      }
-      if (trx.status === 'VOID') {
-        throw new Error('ALREADY_VOID');
-      }
-
-      trx.status = 'VOID';
-      trx.description = reason ? `[DIBATALKAN/VOID]: ${reason} (Semula: ${trx.description})` : `[DIBATALKAN/VOID] ${trx.description}`;
-      trx.updated_at = new Date().toISOString();
-      this.persist();
-
-      // Push to Google Sheets
-      if (this.memoryData.settings.gas_script_url) {
-        this.pushToGas('voidTransaction', {
-          transaction_id: transactionId,
-          reason
-        }).catch((e) => console.warn('Push voidTransaction to GAS error:', e));
-      }
-
-      const metrics = this.calculateStudentBalance(trx.student_id);
-      const student = this.memoryData.students.find((s) => s.student_id === trx.student_id || s.nisn === trx.student_id);
-
-      return {
-        transaction: {
-          ...trx,
-          student_nama: student?.nama || '',
-          student_nisn: student?.nisn || '',
-          student_kelas: student?.kelas || ''
-        },
-        newBalance: metrics.balance
-      };
-    } finally {
-      release();
-    }
-  }
-
-  // ==========================
-  // DASHBOARD SUMMARY
-  // ==========================
-  public getDashboard(): DashboardSummary {
-    const students = this.memoryData.students.filter((s) => s.status === 'ACTIVE');
-    const today = new Date().toISOString().split('T')[0];
-
-    let totalClassBalance = 0;
-    let activeSavers = 0;
-    let totalDepositAllTime = 0;
-    let totalWithdrawalAllTime = 0;
-
-    for (const student of students) {
-      const m = this.calculateStudentBalance(student.student_id);
-      totalClassBalance += m.balance;
-      if (m.balance > 0) {
-        activeSavers++;
-      }
-      totalDepositAllTime += m.totalDeposit;
-      totalWithdrawalAllTime += m.totalWithdrawal;
-    }
-
-    const todayTrx = this.memoryData.transactions.filter(
-      (t) => t.transaction_date === today && t.status === 'ACTIVE'
-    );
-
-    let todayDeposit = 0;
-    let todayWithdrawal = 0;
-
-    for (const t of todayTrx) {
-      if (t.transaction_type === 'SETORAN') {
-        todayDeposit += t.amount;
-      } else if (t.transaction_type === 'PENARIKAN') {
-        todayWithdrawal += t.amount;
-      }
-    }
-
-    const recentTransactions = this.getTransactions({ limit: 10 });
+    const newBalance = typeof result?.newBalance === 'number' ? result.newBalance : (student.balance || 0) + totalBalanceDelta;
 
     return {
-      teacherName: this.memoryData.settings.teacher_name,
-      className: this.memoryData.settings.class_name,
-      academicYear: this.memoryData.settings.academic_year,
-      totalStudents: students.length,
-      activeSavers,
+      transaction: result.transaction,
+      currentBalance: newBalance,
+      student: {
+        nisn: student.nisn,
+        balance: newBalance,
+        totalDeposit: type === 'SETORAN' ? (student.totalDeposit || 0) + amount : student.totalDeposit,
+        totalWithdrawal: type === 'PENARIKAN' ? (student.totalWithdrawal || 0) + amount : student.totalWithdrawal,
+        transactionCount: (student.transactionCount || 0) + 1
+      },
+      dashboardDelta: {
+        totalBalanceDelta,
+        todayDepositDelta,
+        todayWithdrawalDelta
+      },
+      warning: result.warning,
+      idempotent: result.idempotent
+    };
+  }
+
+  public createDeposit(params: { student_id: string; amount: number; transaction_date?: string; description?: string }, user: User) { return this.createTransaction('SETORAN', params, user); }
+  public createWithdrawal(params: { student_id: string; amount: number; transaction_date?: string; description?: string }, user: User) { return this.createTransaction('PENARIKAN', params, user); }
+
+  public async voidTransaction(transactionId: string, voidReason: string | undefined, user: User): Promise<TransactionMutationResult> {
+    const result = await this.callGasApi<any>('voidTransaction', {
+      transaction_id: String(transactionId || '').trim(),
+      void_reason: sanitizeText(voidReason || 'Dibatalkan', 250)
+    }, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
+    this.clearUserCache(user.user_id);
+
+    const trx = result.transaction as Transaction;
+    const today = getJakartaToday();
+    const isToday = trx?.transaction_date === today;
+    const amount = Number(trx?.amount || 0);
+    const wasDeposit = trx?.transaction_type === 'SETORAN';
+
+    const totalBalanceDelta = wasDeposit ? -amount : amount;
+    const todayDepositDelta = wasDeposit && isToday ? -amount : 0;
+    const todayWithdrawalDelta = !wasDeposit && isToday ? -amount : 0;
+
+    return {
+      transaction: trx,
+      currentBalance: Number(result?.newBalance ?? 0),
+      student: trx?.nisn ? {
+        nisn: trx.nisn,
+        balance: Number(result?.newBalance ?? 0)
+      } : undefined,
+      dashboardDelta: {
+        totalBalanceDelta,
+        todayDepositDelta,
+        todayWithdrawalDelta
+      },
+      warning: result.warning
+    };
+  }
+
+  public async getBootstrapData(user: User): Promise<BootstrapData> {
+    const profile = await this.getAccessProfile(user.user_id, user.role);
+    const settings = await this.getSettings(user);
+    let dashboard: DashboardSummary | null = null;
+    let students: Student[] = [];
+    let recentTransactions: Transaction[] = [];
+    let activeSection: ClassSection | null = null;
+
+    if (user.active_class_section_id) {
+      try {
+        const bundle = await this.getScopeBundle(user);
+        activeSection = bundle.section;
+        students = bundle.students.map((s) => ({ ...s }));
+        recentTransactions = [...bundle.transactions]
+          .sort((a, b) => `${b.transaction_date}|${b.created_at}`.localeCompare(`${a.transaction_date}|${a.created_at}`))
+          .slice(0, 30);
+        dashboard = await this.getDashboardSummary(user);
+      } catch (err: any) {
+        console.warn('Bootstrap scope bundle failed:', err.message);
+      }
+    }
+
+    return {
+      user,
+      academicYears: profile.academic_years,
+      assignments: profile.assignments,
+      classSections: profile.class_sections,
+      activeSection,
+      dashboard,
+      students,
+      recentTransactions,
+      settings
+    };
+  }
+
+  public async getDashboardSummary(user: User): Promise<DashboardSummary> {
+    const bundle = await this.getScopeBundle(user);
+    const today = getJakartaToday();
+    const activeTrx = bundle.transactions.filter((t) => t.status === 'ACTIVE');
+    let todayDeposit = 0, todayWithdrawal = 0;
+    for (const t of activeTrx) {
+      if (t.transaction_date !== today) continue;
+      if (t.transaction_type === 'SETORAN') todayDeposit += t.amount;
+      if (t.transaction_type === 'PENARIKAN') todayWithdrawal += t.amount;
+    }
+    const totalClassBalance = bundle.students.reduce((a, s) => a + Number(s.balance || 0), 0);
+    const totalDepositAllTime = bundle.students.reduce((a, s) => a + Number(s.totalDeposit || 0), 0);
+    const totalWithdrawalAllTime = bundle.students.reduce((a, s) => a + Number(s.totalWithdrawal || 0), 0);
+    return {
+      teacherName: user.name,
+      className: bundle.section.class_name,
+      academicYear: bundle.section.academic_year,
+      totalStudents: bundle.students.filter((s) => s.enrollment_status !== 'INACTIVE').length,
+      activeSavers: bundle.students.filter((s) => Number(s.transactionCount || 0) > 0 && s.enrollment_status !== 'INACTIVE').length,
       totalClassBalance,
       todayDeposit,
       todayWithdrawal,
       totalDepositAllTime,
       totalWithdrawalAllTime,
-      recentTransactions
+      recentTransactions: [...bundle.transactions].sort((a, b) => `${b.transaction_date}|${b.created_at}`.localeCompare(`${a.transaction_date}|${a.created_at}`)).slice(0, 8)
     };
   }
 
-  // ==========================
-  // REPORTS
-  // ==========================
-  public getStudentReport(studentId: string, period?: { startDate?: string; endDate?: string }): StudentReport | null {
-    const student = this.getStudentById(studentId);
+  public async getStudentReport(studentId: string, user: User, period?: { startDate?: string; endDate?: string }): Promise<StudentReport | null> {
+    const student = await this.getStudentById(studentId, user);
     if (!student) return null;
-
-    let transactions = this.memoryData.transactions.filter((t) => t.student_id === studentId || t.student_id === student.student_id);
-
-    if (period?.startDate) {
-      transactions = transactions.filter((t) => t.transaction_date >= period.startDate!);
+    let transactions = (await this.getTransactions(user, student.nisn));
+    if (period?.startDate) transactions = transactions.filter((t) => t.transaction_date >= period.startDate!);
+    if (period?.endDate) transactions = transactions.filter((t) => t.transaction_date <= period.endDate!);
+    let periodDeposit = 0, periodWithdrawal = 0;
+    for (const t of transactions.filter((t) => t.status === 'ACTIVE')) {
+      if (t.transaction_type === 'SETORAN') periodDeposit += t.amount;
+      if (t.transaction_type === 'PENARIKAN') periodWithdrawal += t.amount;
     }
-    if (period?.endDate) {
-      transactions = transactions.filter((t) => t.transaction_date <= period.endDate!);
-    }
-
-    // Sort newest first
-    transactions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    const activeTrx = transactions.filter((t) => t.status === 'ACTIVE');
-    let totalDeposit = 0;
-    let totalWithdrawal = 0;
-
-    for (const t of activeTrx) {
-      if (t.transaction_type === 'SETORAN') totalDeposit += t.amount;
-      if (t.transaction_type === 'PENARIKAN') totalWithdrawal += t.amount;
-      if (t.transaction_type === 'KOREKSI') {
-        if (t.amount >= 0) totalDeposit += t.amount;
-        else totalWithdrawal += Math.abs(t.amount);
-      }
-    }
-
-    const balance = totalDeposit - totalWithdrawal;
-
-    const populatedTrx = transactions.map((t) => ({
-      ...t,
-      student_nama: student.nama,
-      student_nisn: student.nisn,
-      student_kelas: student.kelas
-    }));
-
     return {
       student,
       summary: {
-        balance,
-        totalDeposit,
-        totalWithdrawal,
-        transactionCount: activeTrx.length
+        balance: Number(student.balance || 0),
+        totalDeposit: Number(student.totalDeposit || 0),
+        totalWithdrawal: Number(student.totalWithdrawal || 0),
+        transactionCount: Number(student.transactionCount || 0),
+        periodDeposit,
+        periodWithdrawal,
+        periodNet: periodDeposit - periodWithdrawal,
+        currentBalance: Number(student.balance || 0)
       },
-      transactions: populatedTrx
+      transactions
     };
   }
 
-  public getClassReport(): ClassReport {
-    const students = this.memoryData.students;
-    let totalBalance = 0;
-    let totalDeposit = 0;
-    let totalWithdrawal = 0;
-    let totalTransactions = 0;
+  public async getClassReport(user: User): Promise<ClassReport> {
+    const students = await this.getStudents(user);
+    let totalBalance = 0, totalDeposit = 0, totalWithdrawal = 0, transactionCount = 0;
+    const list = students.map((s) => {
+      const balance = Number(s.balance || 0), deposit = Number(s.totalDeposit || 0), withdrawal = Number(s.totalWithdrawal || 0), count = Number(s.transactionCount || 0);
+      totalBalance += balance; totalDeposit += deposit; totalWithdrawal += withdrawal; transactionCount += count;
+      return { studentId: s.student_id, nisn: s.nisn, name: s.nama, gender: s.jenis_kelamin, totalDeposit: deposit, totalWithdrawal: withdrawal, balance, transactionCount: count, status: s.status, ledgerError: balance < 0 };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    return { totalStudents: students.length, totalBalance, totalDeposit, totalWithdrawal, transactionCount, students: list };
+  }
 
-    const studentList = students.map((s) => {
-      const m = this.calculateStudentBalance(s.student_id);
-      totalBalance += m.balance;
-      totalDeposit += m.totalDeposit;
-      totalWithdrawal += m.totalWithdrawal;
-      totalTransactions += m.transactionCount;
-
-      return {
-        studentId: s.student_id,
-        nisn: s.nisn,
-        name: s.nama,
-        gender: s.jenis_kelamin,
-        totalDeposit: m.totalDeposit,
-        totalWithdrawal: m.totalWithdrawal,
-        balance: m.balance,
-        transactionCount: m.transactionCount,
-        status: s.status
-      };
-    });
-
-    // Sort by name
-    studentList.sort((a, b) => a.name.localeCompare(b.name));
-
+  public async getSettings(user: User): Promise<AppSettings> {
+    const bundle = user.active_class_section_id ? await this.getScopeBundle(user) : { settings: await this.callGasApi<Record<string, any>>('getSettings', {}, { user_id: user.user_id, role: user.role }), section: null } as any;
+    const s = bundle.settings || {};
     return {
-      totalStudents: students.length,
-      totalBalance,
-      totalDeposit,
-      totalWithdrawal,
-      transactionCount: totalTransactions,
-      students: studentList
+      school_name: sanitizeText(s.school_name || 'MI Islam Terpadu Al-Uswah Pasirian', 100),
+      school_logo: '',
+      academic_year: user.active_academic_year,
+      currency: 'IDR',
+      minimum_deposit: Number(s.minimum_deposit) > 0 ? Number(s.minimum_deposit) : 1000,
+      maximum_deposit: Number(s.maximum_deposit) > 0 ? Math.min(Number(s.maximum_deposit), CONFIG.MAX_TRANSACTION_AMOUNT) : Math.min(5000000, CONFIG.MAX_TRANSACTION_AMOUNT),
+      maximum_withdrawal: Number(s.maximum_withdrawal) > 0 ? Math.min(Number(s.maximum_withdrawal), CONFIG.MAX_TRANSACTION_AMOUNT) : Math.min(5000000, CONFIG.MAX_TRANSACTION_AMOUNT),
+      class_id: user.active_class_id,
+      class_name: user.active_class_id,
+      teacher_name: user.name,
+      gas_script_url: 'https://script.google.com/... (Configured in Server ENV)',
+      gas_configured: true,
+      allowed_classes: user.class_ids,
+      allowed_academic_years: user.academic_years
     };
   }
 
-  // ==========================
-  // SETTINGS & GAS SYNC
-  // ==========================
-  public getSettings(): AppSettings {
-    return this.memoryData.settings;
-  }
-
-  public updateSettings(updates: Partial<AppSettings>): AppSettings {
-    this.memoryData.settings = {
-      ...this.memoryData.settings,
-      ...updates
+  public async updateSettings(updates: Partial<AppSettings>, user: User): Promise<AppSettings> {
+    const safe = {
+      school_name: updates.school_name ? sanitizeText(updates.school_name, 100) : undefined,
+      minimum_deposit: updates.minimum_deposit,
+      maximum_deposit: updates.maximum_deposit,
+      maximum_withdrawal: updates.maximum_withdrawal
     };
-    this.persist();
-
-    // Push to Google Sheets SETTINGS table
-    if (this.memoryData.settings.gas_script_url) {
-      this.pushToGas('updateSettings', {
-        school_name: this.memoryData.settings.school_name,
-        class_name: this.memoryData.settings.class_name,
-        teacher_name: this.memoryData.settings.teacher_name,
-        academic_year: this.memoryData.settings.academic_year,
-        minimum_deposit: this.memoryData.settings.minimum_deposit
-      }).catch((e) => console.warn('Push updateSettings to GAS error:', e));
-    }
-
-    return this.memoryData.settings;
+    await this.callGasApi('saveSettings', safe, { user_id: user.user_id, role: user.role });
+    this.clearUserCache();
+    return this.getSettings(user);
   }
 
-  public async syncFromGas(): Promise<{ success: boolean; message: string; data?: any }> {
-    const gasUrl = this.memoryData.settings.gas_script_url;
-    if (!gasUrl || !gasUrl.startsWith('http')) {
-      return { success: false, message: 'URL Google Apps Script belum dikonfigurasi.' };
+  public async changePassword(userId: string, oldPasswordInput: string, newPasswordInput: string): Promise<{ message: string }> {
+    const oldPassword = String(oldPasswordInput || '');
+    const newPassword = String(newPasswordInput || '');
+    if (!oldPassword) throw new Error('Kata sandi saat ini wajib diisi.');
+    if (!newPassword || newPassword.length < 8) throw new Error('Kata sandi baru minimal 8 karakter.');
+    if (newPassword.length > 128) throw new Error('Kata sandi baru maksimal 128 karakter.');
+    if (oldPassword === newPassword) throw new Error('Kata sandi baru tidak boleh sama dengan kata sandi saat ini.');
+
+    const authRecord = await this.callGasApi<AuthRecord>('getAuthUser', { user_id: userId });
+    if (!authRecord || !verifyPassword(oldPassword, authRecord.password_hash)) {
+      throw new Error('Kata sandi saat ini tidak sesuai.');
     }
 
-    try {
-      const res = await fetch(`${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=syncAll`, {
-        redirect: 'follow'
-      });
+    const newHash = hashPassword(newPassword);
+    await this.callGasApi('updateUserPasswordHash', { user_id: userId, password_hash: newHash }, { user_id: userId });
+    this.clearUserCache(userId);
+    return { message: 'Kata sandi berhasil diubah.' };
+  }
 
-      if (!res.ok) {
-        throw new Error(`Google Apps Script merespons dengan status ${res.status}`);
-      }
-
-      const json = (await res.json()) as any;
-      if (!json.success || !json.data) {
-        throw new Error(json.error?.message || 'Format data dari Google Apps Script tidak valid.');
-      }
-
-      const { users, students, transactions, settings } = json.data;
-
-      // Sync Users (Replace if provided)
-      if (Array.isArray(users) && users.length > 0) {
-        this.memoryData.users = users.map((u: any, idx: number) => ({
-          user_id: String(u.user_id || `USR-00${idx + 1}`),
-          username: String(u.username || '').trim(),
-          name: String(u.name || 'Jefri Eka Anggara Putra, S.Pd'),
-          password_hash: String(u.password_hash || ''),
-          class_id: String(u.class_id || '5C'),
-          status: (String(u.status || 'ACTIVE').toUpperCase() as any),
-          created_at: u.created_at || new Date().toISOString(),
-          updated_at: u.updated_at || new Date().toISOString()
-        }));
-      }
-
-      // Sync Students (Completely replace with actual Google Sheets records: NISN, Nama, Jenis Kelamin, Kelas, No HP Wali)
-      if (Array.isArray(students)) {
-        this.memoryData.students = students.map((st: any) => {
-          const nisnVal = String(st.nisn || st.student_id || '').trim();
-          return {
-            student_id: nisnVal,
-            nisn: nisnVal,
-            nama: String(st.nama || '').trim(),
-            jenis_kelamin: (String(st.jenis_kelamin || 'L').toUpperCase() === 'P' ? 'P' : 'L') as any,
-            kelas: String(st.kelas || '5C').trim(),
-            no_hp_wali: String(st.no_hp_wali || '').trim(),
-            status: (String(st.status || 'ACTIVE').toUpperCase() as any),
-            created_at: st.created_at || new Date().toISOString(),
-            updated_at: st.updated_at || new Date().toISOString()
-          };
-        });
-      }
-
-      // Sync Transactions (Completely replace with actual Google Sheets records)
-      if (Array.isArray(transactions)) {
-        this.memoryData.transactions = transactions.map((t: any) => {
-          const nisnVal = String(t.nisn || t.student_id || '').trim();
-          const namaVal = String(t.nama || t.student_nama || '').trim();
-          return {
-            transaction_id: String(t.transaction_id),
-            student_id: nisnVal,
-            nisn: nisnVal,
-            nama: namaVal,
-            transaction_type: (String(t.transaction_type || 'SETORAN').toUpperCase() as any),
-            amount: Number(t.amount) || 0,
-            transaction_date: String(t.transaction_date || ''),
-            description: String(t.description || ''),
-            created_by: String(t.created_by || 'Wali Kelas'),
-            created_at: t.created_at || new Date().toISOString(),
-            updated_at: t.updated_at || new Date().toISOString(),
-            status: (String(t.status || 'ACTIVE').toUpperCase() as any),
-            void_reason: t.void_reason ? String(t.void_reason) : undefined
-          };
-        });
-      }
-
-      // Sync Settings
-      if (settings && typeof settings === 'object') {
-        if (settings.school_name) this.memoryData.settings.school_name = String(settings.school_name);
-        if (settings.class_name) this.memoryData.settings.class_name = String(settings.class_name);
-        if (settings.teacher_name) this.memoryData.settings.teacher_name = String(settings.teacher_name);
-        if (settings.academic_year) this.memoryData.settings.academic_year = String(settings.academic_year);
-        if (settings.minimum_deposit !== undefined) this.memoryData.settings.minimum_deposit = Number(settings.minimum_deposit) || 1000;
-      }
-
-      this.persist();
-      return {
-        success: true,
-        message: `Sinkronisasi berhasil! Terhubung dengan Google Sheets: ${this.memoryData.students.length} siswa, ${this.memoryData.transactions.length} transaksi dimuat.`
-      };
-    } catch (err: any) {
-      console.error('syncFromGas error:', err);
-      return { success: false, message: err.message || 'Gagal sinkronisasi dengan Google Apps Script.' };
-    }
+  public async syncFromGas(user: User): Promise<{ message: string; studentCount: number; transactionCount: number }> {
+    this.clearUserCache(user.user_id);
+    await this.getAccessProfile(user.user_id, user.role, true);
+    if (!user.active_class_section_id) return { message: 'Profil akses diperbarui. Akun belum memiliki kelas aktif.', studentCount: 0, transactionCount: 0 };
+    const bundle = await this.getScopeBundle(user, true);
+    return { message: 'Data Google Sheets berhasil diperbarui.', studentCount: bundle.students.length, transactionCount: bundle.transactions.length };
   }
 }
 
-export const db = new DatabaseManager();
+export const db = new DatabaseService();

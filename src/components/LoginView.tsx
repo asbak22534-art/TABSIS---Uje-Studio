@@ -62,16 +62,16 @@ export const LoginView: React.FC = () => {
             TABUNGAN SISWA
           </h1>
           <p className="text-sm text-emerald-200/80 mt-1 font-medium">
-            Portal Khusus Wali Kelas • Pengelolaan Tabungan Mandiri
+            Portal Pengguna • Pengelolaan Tabungan Siswa
           </p>
         </div>
 
         {/* Login Card */}
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-100/10">
           <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-900">Masuk sebagai Wali Kelas</h2>
+            <h2 className="text-lg font-bold text-slate-900">Masuk ke Sistem</h2>
             <p className="text-xs text-slate-600 mt-0.5">
-              Masukkan kredensial akun wali kelas Anda untuk melanjutkan.
+              Masukkan username dan kata sandi akun Anda untuk melanjutkan.
             </p>
           </div>
 
@@ -90,7 +90,7 @@ export const LoginView: React.FC = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Username Wali Kelas
+                Username
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -156,12 +156,19 @@ export const LoginView: React.FC = () => {
               )}
             </button>
           </form>
+
+          <div className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <span>Multi Guru &amp; Multi Kelas</span>
+            <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+              Aktif &amp; Terproteksi
+            </span>
+          </div>
         </div>
 
         {/* Security & Footer Info */}
         <div className="mt-6 text-center text-xs text-emerald-200/60 font-medium space-y-1">
-          <p>Dirancang khusus untuk guru sekolah • Mobile First PWA</p>
-          <p>Data tersinkronisasi aman dengan Google Sheets &amp; Database</p>
+          <p>Dirancang untuk guru &amp; wali kelas sekolah • Mobile First PWA</p>
+          <p>Data tersinkronisasi aman dengan Google Sheets</p>
         </div>
       </motion.div>
     </motion.div>

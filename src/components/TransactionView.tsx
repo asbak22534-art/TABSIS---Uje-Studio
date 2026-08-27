@@ -17,10 +17,11 @@ import {
   X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Student, Transaction, AppSettings } from '../types';
-import { api } from '../lib/api';
-import { formatRupiah, formatDateIndo, generateWhatsAppMessage, formatNumber, terbilangRupiah } from '../lib/utils';
+import { Student, Transaction, TransactionMutationResult } from '../types';
+import { formatRupiah, formatDateIndo, generateWhatsAppMessage, formatNumber, terbilangRupiah, getJakartaToday } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
+import { useStudentsQuery, useSettingsQuery, useTransactionMutations } from '../hooks/useQueries';
+import { TransactionSkeleton, DelayedRender } from './Skeleton';
 
 interface TransactionViewProps {
   initialStudentId?: string;
@@ -33,9 +34,9 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
   initialType = 'SETORAN',
   onGoToStudentDetail
 }) => {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [loadingStudents, setLoadingStudents] = useState(true);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const { data: students = [], isLoading: loadingStudents } = useStudentsQuery();
+  const { data: settings } = useSettingsQuery();
+  const { depositMutation, withdrawalMutation } = useTransactionMutations();
 
   // Form states
   const [type, setType] = useState<'SETORAN' | 'PENARIKAN'>(initialType);
@@ -45,7 +46,7 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
   const [amount, setAmount] = useState<number | ''>('');
   const [description, setDescription] = useState('');
   const [transactionDate, setTransactionDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    getJakartaToday()
   );
 
   // Submission state (Pessimistic transaction model)
@@ -58,29 +59,6 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
   } | null>(null);
 
   const { success: toastSuccess, error: toastError } = useToast();
-
-  const loadInitialData = async () => {
-    try {
-      const [stdList, sett] = await Promise.all([
-        api.getStudents('ACTIVE'),
-        api.getSettings()
-      ]);
-      setStudents(stdList);
-      setSettings(sett);
-
-      if (initialStudentId && !selectedStudentId) {
-        setSelectedStudentId(initialStudentId);
-      }
-    } catch (err: any) {
-      toastError('Gagal Memuat Data', err.message);
-    } finally {
-      setLoadingStudents(false);
-    }
-  };
-
-  useEffect(() => {
-    loadInitialData();
-  }, []);
 
   useEffect(() => {
     if (initialStudentId) {
@@ -135,17 +113,17 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     setErrorMessage('');
 
     try {
-      let result: { transaction: Transaction; newBalance: number };
+      let result: TransactionMutationResult;
 
       if (type === 'SETORAN') {
-        result = await api.createDeposit({
+        result = await depositMutation.mutateAsync({
           student_id: selectedStudent.student_id,
           amount: numAmount,
           description: description.trim() || 'Setoran Tabungan',
           transaction_date: transactionDate
         });
       } else {
-        result = await api.createWithdrawal({
+        result = await withdrawalMutation.mutateAsync({
           student_id: selectedStudent.student_id,
           amount: numAmount,
           description: description.trim() || 'Penarikan Tabungan',
@@ -162,29 +140,21 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
         });
       } catch {}
 
-      // Update local student balance in student list
-      setStudents((prev) =>
-        prev.map((s) =>
-          s.student_id === selectedStudent.student_id
-            ? { ...s, balance: result.newBalance }
-            : s
-        )
-      );
+      const finalBal = result.currentBalance;
 
       setSuccessReceipt({
         transaction: result.transaction,
-        newBalance: result.newBalance,
-        student: { ...selectedStudent, balance: result.newBalance }
+        newBalance: finalBal,
+        student: { ...selectedStudent, balance: finalBal }
       });
 
       toastSuccess(
-        type === 'SETORAN' ? 'Setoran Berhasil!' : 'Penarikan Berhasil!',
-        `${formatRupiah(numAmount)} untuk ${selectedStudent.nama}`
+        `${type === 'SETORAN' ? 'Setoran' : 'Penarikan'} Berhasil!`,
+        `Transaksi senilai ${formatRupiah(numAmount)} untuk ${selectedStudent.nama} berhasil dicatat di buku kas.`
       );
     } catch (err: any) {
-      const msg = err.message || 'Gagal memproses transaksi keuangan.';
-      setErrorMessage(msg);
-      toastError('Transaksi Gagal', msg);
+      setErrorMessage(err.message || 'Gagal memproses transaksi.');
+      toastError('Transaksi Gagal', err.message);
     } finally {
       setIsProcessing(false);
     }
@@ -441,52 +411,58 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
 
                 {/* Dropdown list */}
                 {isDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 z-50 mt-1.5 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 max-h-60 overflow-y-auto">
-                    <div className="p-1 mb-1">
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                          type="text"
-                          value={studentSearch}
-                          onChange={(e) => setStudentSearch(e.target.value)}
-                          placeholder="Ketik nama atau NISN..."
-                          className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white outline-none"
-                          autoFocus
-                        />
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsDropdownOpen(false)}
+                    />
+                    <div className="absolute top-full left-0 right-0 z-50 mt-1.5 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 max-h-64 flex flex-col animate-in fade-in zoom-in-95 duration-100">
+                      <div className="p-1 mb-1 shrink-0">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="text"
+                            value={studentSearch}
+                            onChange={(e) => setStudentSearch(e.target.value)}
+                            placeholder="Ketik nama atau NISN..."
+                            className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 overflow-y-auto custom-scrollbar flex-1 pr-0.5 min-h-0">
+                        {filteredStudentList.length === 0 ? (
+                          <p className="p-3 text-center text-xs text-slate-500">Siswa tidak ditemukan.</p>
+                        ) : (
+                          filteredStudentList.map((st) => (
+                            <div
+                              key={st.student_id}
+                              onClick={() => {
+                                setSelectedStudentId(st.student_id);
+                                setIsDropdownOpen(false);
+                                setStudentSearch('');
+                                setErrorMessage('');
+                              }}
+                              className={`p-2.5 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                                selectedStudentId === st.student_id
+                                  ? 'bg-emerald-50 text-emerald-900 font-bold border border-emerald-200/60'
+                                  : 'hover:bg-slate-50 text-slate-700'
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <p className="font-bold text-slate-900 truncate">{st.nama}</p>
+                                <p className="text-[10px] text-slate-500">NISN: {st.nisn || st.student_id} • Kls {st.kelas}</p>
+                              </div>
+                              <span className="font-extrabold text-emerald-700 shrink-0">
+                                {formatRupiah(st.balance || 0)}
+                              </span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
-
-                    <div className="space-y-1">
-                      {filteredStudentList.length === 0 ? (
-                        <p className="p-3 text-center text-xs text-slate-700">Siswa tidak ditemukan.</p>
-                      ) : (
-                        filteredStudentList.map((st) => (
-                          <div
-                            key={st.student_id}
-                            onClick={() => {
-                              setSelectedStudentId(st.student_id);
-                              setIsDropdownOpen(false);
-                              setStudentSearch('');
-                              setErrorMessage('');
-                            }}
-                            className={`p-2.5 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
-                              selectedStudentId === st.student_id
-                                ? 'bg-emerald-50 text-emerald-900 font-bold'
-                                : 'hover:bg-slate-50 text-slate-700'
-                            }`}
-                          >
-                            <div>
-                              <p className="font-bold text-slate-900">{st.nama}</p>
-                              <p className="text-[10px] text-slate-700">NISN: {st.nisn || st.student_id}</p>
-                            </div>
-                            <span className="font-extrabold text-emerald-700">
-                              {formatRupiah(st.balance || 0)}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                  </>
                 )}
               </div>
             </div>

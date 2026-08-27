@@ -1,4 +1,4 @@
-export const GAS_SCRIPT_CODE = String.raw`/**
+/**
  * TABUNGAN SISWA - GOOGLE APPS SCRIPT BACKEND
  * Version 5.0.0 - Multi Role / Multi Teacher / Academic Year / Class Sections
  *
@@ -82,7 +82,6 @@ function doPost(e) {
 
 function handleRequest(action, data, context) {
   switch (action) {
-    case 'getBootstrapData': return getBootstrapData(data, context);
     case 'getAccessProfile': return getAccessProfile(context);
     case 'getScopeData': return getScopeData(context);
     case 'getSettings': return getSettingsData();
@@ -328,69 +327,6 @@ function assertSectionAccess(sectionId, context) {
     if (String(rows[i][idx.user_id] || '').trim() === context.user_id && String(rows[i][idx.class_section_id] || '').trim() === sectionId && String(rows[i][idx.status] || 'ACTIVE').toUpperCase() === 'ACTIVE') return section;
   }
   throw apiError('CLASS_FORBIDDEN', 'Akun guru tidak ditugaskan ke kelas ini.');
-}
-
-function getBootstrapData(data, context) {
-  var profile = getAccessProfile(context);
-  var targetSectionId = sanitizeText(data && data.class_section_id ? data.class_section_id : context.active_class_section_id, 100);
-  if (!targetSectionId && profile.class_sections && profile.class_sections.length > 0) {
-    targetSectionId = profile.class_sections[0].class_section_id;
-  }
-  
-  var section = null, students = [], transactions = [], recentTransactions = [], summary = null;
-  var settings = getSettingsData();
-  
-  if (targetSectionId) {
-    try {
-      section = assertSectionAccess(targetSectionId, context);
-      students = getStudentsForSection(section, context);
-      transactions = getTransactionsForSection(section);
-      transactions.sort(function(a, b) {
-        return (b.transaction_date + '|' + b.created_at).localeCompare(a.transaction_date + '|' + a.created_at);
-      });
-      recentTransactions = transactions.slice(0, 30);
-      
-      var today = Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd');
-      var todayDep = 0, todayWit = 0, totalDep = 0, totalWit = 0, totalBal = 0;
-      for (var s = 0; s < students.length; s++) {
-        var st = students[s];
-        totalBal += Number(st.balance || 0);
-        totalDep += Number(st.totalDeposit || 0);
-        totalWit += Number(st.totalWithdrawal || 0);
-      }
-      for (var t = 0; t < transactions.length; t++) {
-        var trx = transactions[t];
-        if (trx.status === 'ACTIVE' && trx.transaction_date === today) {
-          if (trx.transaction_type === 'SETORAN') todayDep += trx.amount;
-          else if (trx.transaction_type === 'PENARIKAN') todayWit += trx.amount;
-        }
-      }
-      summary = {
-        teacherName: context.user_name,
-        className: section.class_name,
-        academicYear: section.academic_year,
-        totalStudents: students.filter(function(s) { return s.enrollment_status !== 'INACTIVE'; }).length,
-        activeSavers: students.filter(function(s) { return Number(s.transactionCount || 0) > 0 && s.enrollment_status !== 'INACTIVE'; }).length,
-        totalClassBalance: totalBal,
-        todayDeposit: todayDep,
-        todayWithdrawal: todayWit,
-        totalDepositAllTime: totalDep,
-        totalWithdrawalAllTime: totalWit,
-        recentTransactions: recentTransactions.slice(0, 8)
-      };
-    } catch (e) {
-      // Keep section null if forbidden or inactive
-    }
-  }
-  
-  return {
-    profile: profile,
-    section: section,
-    dashboard: summary,
-    students: students,
-    recentTransactions: recentTransactions,
-    settings: settings
-  };
 }
 
 function getScopeData(context) {
@@ -670,7 +606,7 @@ function getSettingsData() {
  * Non-destructive migration helper for the previous schema.
  * Requirements before running:
  * 1) ACADEMIC_YEARS has at least one ACTIVE row.
- * 2) Existing STUDENTS rows contain legacy \`kelas\` if enrollment must be inferred.
+ * 2) Existing STUDENTS rows contain legacy `kelas` if enrollment must be inferred.
  * Existing columns are never deleted.
  */
 function migrateLegacyData() {
@@ -776,22 +712,16 @@ function migrateLegacyData() {
   return { migrated_enrollments: migratedEnrollments, created_class_sections: createdSections, migrated_transactions: migratedTransactions, migrated_teacher_assignments: migratedAssignments };
 }
 
-
 function migrateLegacyUsers() {
   var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.USERS);
   if (!sheet) return;
   var h = ensureHeaders(sheet, USER_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues(), now = formatDateTimeJakarta(new Date());
-  var hasAdmin = false;
-  for (var a = 1; a < rows.length; a++) if (String(rows[a][idx.role] || '').toUpperCase() === 'ADMIN' && String(rows[a][idx.status] || 'ACTIVE').toUpperCase() !== 'INACTIVE') { hasAdmin = true; break; }
   for (var i = 1; i < rows.length; i++) {
     var username = String(rows[i][idx.username] || '').trim(); if (!username) continue;
     if (!String(rows[i][idx.user_id] || '').trim()) sheet.getRange(i + 1, idx.user_id + 1).setValue('USR-' + Utilities.getUuid());
     if (!String(rows[i][idx.name] || '').trim()) sheet.getRange(i + 1, idx.name + 1).setValue(username);
     if (!String(rows[i][idx.status] || '').trim()) sheet.getRange(i + 1, idx.status + 1).setValue('ACTIVE');
-    if (!String(rows[i][idx.role] || '').trim()) {
-      sheet.getRange(i + 1, idx.role + 1).setValue(hasAdmin ? 'GURU' : 'ADMIN');
-      if (!hasAdmin) hasAdmin = true;
-    }
+    sheet.getRange(i + 1, idx.role + 1).setValue('GURU');
     if (!String(rows[i][idx.created_at] || '').trim()) sheet.getRange(i + 1, idx.created_at + 1).setValue(now);
     sheet.getRange(i + 1, idx.updated_at + 1).setValue(now);
   }
@@ -860,4 +790,3 @@ function isUuidV4(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][
 function toBoolean(value) { if (value === true) return true; var s = String(value || '').trim().toUpperCase(); return s === 'TRUE' || s === '1' || s === 'YES' || s === 'YA'; }
 function apiError(code, message) { var err = new Error(message); err.code = code; return err; }
 function jsonOutput(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
-`;

@@ -1,11 +1,10 @@
 // Service Worker for Tabungan Siswa PWA
-const CACHE_NAME = 'tabungan-siswa-v1';
+const CACHE_NAME = 'tabungan-siswa-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/manifest.webmanifest',
-  '/icon-192.png',
-  '/icon-512.png'
+  '/favicon.svg',
+  '/manifest.webmanifest'
 ];
 
 self.addEventListener('install', (event) => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   FileBarChart, 
   Download, 
@@ -14,40 +14,24 @@ import {
   RefreshCw,
   Clock
 } from 'lucide-react';
-import { ClassReport, Transaction } from '../types';
+import { Transaction } from '../types';
 import { api } from '../lib/api';
-import { formatRupiah, downloadCSV, formatDateIndo } from '../lib/utils';
-import { ReportSkeleton } from './Skeleton';
+import { formatRupiah, downloadCSV, formatDateIndo, getJakartaToday } from '../lib/utils';
+import { ReportSkeleton, DelayedRender } from './Skeleton';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import { useClassReportQuery } from '../hooks/useQueries';
 
 interface ReportsViewProps {
   onSelectStudent: (studentId: string) => void;
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => {
-  const [classReport, setClassReport] = useState<ClassReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { data: classReport, isLoading, isFetching, refetch } = useClassReportQuery();
   const [search, setSearch] = useState('');
 
   const { success, error: toastError } = useToast();
-
-  const loadReport = async (fresh = false) => {
-    try {
-      if (fresh) setIsRefreshing(true);
-      const data = await api.getClassReport(fresh);
-      setClassReport(data);
-    } catch (err: any) {
-      toastError('Gagal Memuat Laporan', err.message);
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    loadReport();
-  }, []);
+  const { activeAcademicYear, activeClassId } = useAuth();
 
   // Filter student rows
   const filteredStudents = useMemo(() => {
@@ -55,7 +39,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
     if (!search.trim()) return classReport.students;
     const q = search.toLowerCase().trim();
     return classReport.students.filter(
-      (s) => s.name.toLowerCase().includes(q) || (s.nis && s.nis.toLowerCase().includes(q))
+      (s) => s.name.toLowerCase().includes(q) || (s.nisn && s.nisn.toLowerCase().includes(q))
     );
   }, [classReport, search]);
 
@@ -65,7 +49,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
     const header = ['No', 'NISN', 'Nama Siswa', 'Jenis Kelamin', 'Total Setoran (Rp)', 'Total Penarikan (Rp)', 'Saldo Tabungan (Rp)', 'Jumlah Transaksi', 'Status Siswa'];
     const rows = classReport.students.map((s, idx) => [
       (idx + 1).toString(),
-      s.nis,
+      s.nisn || '-',
       s.name,
       s.gender === 'L' ? 'Laki-laki' : 'Perempuan',
       s.totalDeposit.toString(),
@@ -81,7 +65,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
     ];
     const emptyRow = [''];
 
-    downloadCSV(`Rekap_Tabungan_Kelas_${new Date().toISOString().split('T')[0]}.csv`, [
+    downloadCSV(`Rekap_Tabungan_${(activeAcademicYear || 'Tahun').replace('/', '-')}_Kelas_${activeClassId || 'Aktif'}_${getJakartaToday()}.csv`, [
       titleRow,
       statRow,
       emptyRow,
@@ -110,7 +94,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
         t.status
       ]);
 
-      downloadCSV(`Jurnal_Semua_Transaksi_Tabungan_${new Date().toISOString().split('T')[0]}.csv`, [
+      downloadCSV(`Jurnal_Transaksi_Kelas_${activeClassId || 'Aktif'}_${getJakartaToday()}.csv`, [
         ['JURNAL LENGKAP TRANSAKSI TABUNGAN SISWA'],
         [''],
         header,
@@ -127,8 +111,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
     window.print();
   };
 
-  if (loading) {
-    return <ReportSkeleton />;
+  if (isLoading && !classReport) {
+    return (
+      <DelayedRender delay={150}>
+        <ReportSkeleton />
+      </DelayedRender>
+    );
   }
 
   if (!classReport) {
@@ -136,7 +124,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
       <div className="p-8 text-center bg-white rounded-3xl border border-slate-200">
         <p className="text-slate-700">Data rekap kelas belum dapat dimuat.</p>
         <button
-          onClick={() => loadReport(true)}
+          onClick={() => refetch()}
           className="mt-4 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold"
         >
           Coba Lagi
@@ -154,18 +142,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
             Rekap Tabungan Kelas
           </h1>
           <p className="text-xs text-slate-700 font-medium">
-            Laporan lengkap seluruh siswa dan rekapitulasi keuangan kelas
+            Laporan siswa dan rekapitulasi keuangan kelas aktif
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => loadReport(true)}
-            disabled={isRefreshing}
+            onClick={() => refetch()}
+            disabled={isFetching}
             className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-all"
             title="Segarkan data"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
 
           <button
@@ -280,7 +268,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
                     <span className="text-xs font-mono text-slate-700">#{idx + 1}</span>
                     <h3 className="text-sm font-bold text-slate-900">{s.name}</h3>
                   </div>
-                  <p className="text-[11px] text-slate-700 mt-0.5">NISN: {s.nis} • {s.transactionCount} transaksi</p>
+                  <p className="text-[11px] text-slate-700 mt-0.5">NISN: {s.nisn || '-'} • {s.transactionCount} transaksi</p>
                 </div>
 
                 <div className="text-right">
@@ -327,7 +315,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
                 >
                   <td className="py-3.5 px-4 text-center text-slate-700 font-mono">{idx + 1}</td>
                   <td className="py-3.5 px-4 font-bold text-slate-900">{s.name}</td>
-                  <td className="py-3.5 px-4 text-slate-700 font-mono">{s.nis}</td>
+                  <td className="py-3.5 px-4 text-slate-700 font-mono">{s.nisn || '-'}</td>
                   <td className="py-3.5 px-4 text-right font-bold text-emerald-700">
                     +{formatRupiah(s.totalDeposit)}
                   </td>

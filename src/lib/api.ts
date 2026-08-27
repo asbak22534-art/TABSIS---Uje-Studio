@@ -1,382 +1,381 @@
-import { 
-  Student, 
-  Transaction, 
-  DashboardSummary, 
-  StudentReport, 
-  ClassReport, 
-  AppSettings,
-  AuthSession,
-  ApiResponse
-} from '../types';
+import { Student, Transaction, DashboardSummary, StudentReport, ClassReport, AppSettings, AccessProfile, User, BootstrapData, TransactionMutationResult } from '../types';
 
-// In-Memory Cache with TTL
-interface CacheEntry<T> {
-  data: T;
-  expiry: number;
-}
+interface CacheEntry<T> { data: T; expiry: number; }
+export type TransactionResult = TransactionMutationResult;
+
+const DEFAULT_CACHE_TTL = 60_000; // 60 seconds client cache
 
 class ApiService {
   private cache = new Map<string, CacheEntry<any>>();
+  private activeAcademicYear: string | null = null;
+  private activeClassId: string | null = null;
   private token: string | null = null;
 
   constructor() {
-    this.token = localStorage.getItem('tabungan_token');
+    try {
+      if (typeof window !== 'undefined') {
+        this.activeAcademicYear = window.localStorage.getItem('tabungan_active_academic_year');
+        this.activeClassId = window.localStorage.getItem('tabungan_active_class');
+        this.token = window.localStorage.getItem('tabungan_session_token');
+        this.restoreSessionCache();
+      }
+    } catch {}
   }
 
-  public setToken(token: string | null): void {
-    this.token = token;
-    if (token) {
-      localStorage.setItem('tabungan_token', token);
-    } else {
-      localStorage.removeItem('tabungan_token');
-      this.clearCache();
-    }
+  private restoreSessionCache(): void {
+    try {
+      if (typeof window === 'undefined') return;
+      const raw = window.sessionStorage.getItem('tabungan_client_cache');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const now = Date.now();
+        for (const [k, v] of Object.entries(parsed)) {
+          const entry = v as CacheEntry<any>;
+          if (entry && entry.expiry > now) {
+            this.cache.set(k, entry);
+          }
+        }
+      }
+    } catch {}
   }
 
-  public getToken(): string | null {
-    return this.token;
+  private persistSessionCache(): void {
+    try {
+      if (typeof window === 'undefined') return;
+      const obj: Record<string, any> = {};
+      const now = Date.now();
+      for (const [k, v] of this.cache.entries()) {
+        if (v.expiry > now) {
+          obj[k] = v;
+        }
+      }
+      window.sessionStorage.setItem('tabungan_client_cache', JSON.stringify(obj));
+    } catch {}
   }
 
   public clearCache(): void {
     this.cache.clear();
+    try {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem('tabungan_client_cache');
+      }
+    } catch {}
   }
 
-  public invalidate(prefix?: string): void {
-    if (!prefix) {
-      this.cache.clear();
-      return;
-    }
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) {
-        this.cache.delete(key);
+  public getActiveAcademicYear(): string | null { return this.activeAcademicYear; }
+  public getActiveClassId(): string | null { return this.activeClassId; }
+  public getToken(): string | null { return this.token; }
+
+  public setToken(token: string | null): void {
+    this.token = token;
+    try {
+      if (typeof window !== 'undefined') {
+        if (token) {
+          window.localStorage.setItem('tabungan_session_token', token);
+        } else {
+          window.localStorage.removeItem('tabungan_session_token');
+        }
       }
-    }
+    } catch {}
+  }
+
+  public setActiveAcademicYear(year: string | null): void {
+    const clean = year ? String(year).trim() : null;
+    if (clean === this.activeAcademicYear) return;
+    this.activeAcademicYear = clean;
+    this.activeClassId = null;
+    this.clearCache();
+    try {
+      if (typeof window !== 'undefined') {
+        if (clean) window.localStorage.setItem('tabungan_active_academic_year', clean);
+        else window.localStorage.removeItem('tabungan_active_academic_year');
+        window.localStorage.removeItem('tabungan_active_class');
+      }
+    } catch {}
+  }
+
+  public setActiveClassId(classId: string | null): void {
+    const clean = classId ? String(classId).trim() : null;
+    if (clean === this.activeClassId) return;
+    this.activeClassId = clean;
+    this.clearCache();
+    try {
+      if (typeof window !== 'undefined') {
+        if (clean) window.localStorage.setItem('tabungan_active_class', clean);
+        else window.localStorage.removeItem('tabungan_active_class');
+      }
+    } catch {}
+  }
+
+  private cacheKey(key: string): string {
+    return `${this.activeAcademicYear || 'year'}:${this.activeClassId || 'class'}:${key}`;
   }
 
   private getCached<T>(key: string): T | null {
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-    if (Date.now() > entry.expiry) {
-      this.cache.delete(key);
+    const k = this.cacheKey(key);
+    const e = this.cache.get(k);
+    if (!e) return null;
+    if (Date.now() > e.expiry) {
+      this.cache.delete(k);
       return null;
     }
-    return entry.data;
+    return e.data;
   }
 
-  private setCached<T>(key: string, data: T, ttlMs: number = 30000): void {
-    this.cache.set(key, {
-      data,
-      expiry: Date.now() + ttlMs
-    });
+  private setCached<T>(key: string, data: T, ttl = DEFAULT_CACHE_TTL): void {
+    this.cache.set(this.cacheKey(key), { data, expiry: Date.now() + ttl });
+    this.persistSessionCache();
   }
+
+  // Synchronous getters for instant view rendering without skeleton
+  public getCachedSummary(): DashboardSummary | null { return this.getCached<DashboardSummary>('summary'); }
+  public getCachedStudents(): Student[] | null { return this.getCached<Student[]>('students'); }
+  public getCachedClassReport(): ClassReport | null { return this.getCached<ClassReport>('class_report'); }
+  public getCachedSettings(): AppSettings | null { return this.getCached<AppSettings>('settings'); }
+  public getCachedAccessProfile(): AccessProfile | null { return this.getCached<AccessProfile>('access_profile'); }
+  public getCachedGasScript(): string | null { return this.getCached<string>('gas_script'); }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> || {})
-    };
-
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...((options.headers as Record<string, string>) || {}) };
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
-
-    const response = await fetch(endpoint, {
-      ...options,
-      headers
-    });
-
-    let resData: ApiResponse<T>;
-    try {
-      resData = await response.json();
-    } catch (err) {
-      throw new Error('Gagal memproses respon server.');
+    if (endpoint !== '/api/auth/login') {
+      if (this.activeAcademicYear) headers['X-Academic-Year'] = this.activeAcademicYear;
+      if (this.activeClassId) headers['X-Class-Id'] = this.activeClassId;
     }
-
-    if (!response.ok || !resData.success) {
-      const errMsg = resData.error?.message || 'Terjadi kesalahan sistem.';
-      const err = new Error(errMsg);
-      (err as any).code = resData.error?.code || 'SERVER_ERROR';
+    let response: Response;
+    try { response = await fetch(endpoint, { ...options, headers, credentials: 'include' }); }
+    catch (err: any) { throw new Error(`Koneksi ke server gagal: ${err?.message || 'Periksa koneksi internet.'}`); }
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error((await response.text()) || `HTTP ${response.status}`);
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      const err = new Error(result?.error?.message || `Server error (HTTP ${response.status})`); (err as any).code = result?.error?.code || 'API_ERROR'; (err as any).status = response.status;
+      if (response.status === 401 && endpoint !== '/api/auth/login') {
+        this.setToken(null);
+        this.clearCache();
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('tabungan:session_expired', { detail: { message: err.message } }));
+      }
       throw err;
     }
-
-    if (resData.data !== undefined) {
-      return resData.data as T;
-    }
-    return (resData as unknown) as T;
+    return result.data as T;
   }
 
-  // ============================
-  // AUTH
-  // ============================
-  public async login(username: string, password: string): Promise<AuthSession> {
-    const res = await this.request<AuthSession>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password })
-    });
-    this.setToken(res.token);
-    return res;
+  private applyUserScope(user: User): void {
+    const years = Array.isArray(user?.academic_years) ? user.academic_years.map(String) : [];
+    const preferredYear = this.activeAcademicYear && years.includes(this.activeAcademicYear) ? this.activeAcademicYear : String(user?.active_academic_year || years[0] || '');
+    if (preferredYear && preferredYear !== this.activeAcademicYear) this.setActiveAcademicYear(preferredYear);
+    const classes = Array.isArray(user?.class_ids) ? user.class_ids.map(String) : [];
+    const preferredClass = this.activeClassId && classes.includes(this.activeClassId) ? this.activeClassId : String(user?.active_class_id || classes[0] || '');
+    if (preferredClass !== (this.activeClassId || '')) this.setActiveClassId(preferredClass || null);
+  }
+
+  public async login(username: string, password: string): Promise<{ user: User; token?: string }> {
+    const data = await this.request<{ user: User; token?: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+    if (data.token) {
+      this.setToken(data.token);
+    }
+    this.applyUserScope(data.user);
+    return data;
   }
 
   public async logout(): Promise<void> {
-    try {
-      await this.request('/api/auth/logout', { method: 'POST' });
-    } catch {
-      // Ignore network errors on logout
-    } finally {
+    try { await this.request('/api/auth/logout', { method: 'POST' }); }
+    finally {
       this.setToken(null);
+      this.clearCache();
+      this.setActiveAcademicYear(null);
+      this.setActiveClassId(null);
     }
   }
 
-  public async validateSession(): Promise<{ user: any }> {
-    return this.request<{ user: any }>('/api/auth/validate-session');
-  }
-
-  // ============================
-  // DASHBOARD
-  // ============================
-  public async getDashboard(forceFresh = false): Promise<DashboardSummary> {
-    const cacheKey = 'dashboard';
-    if (!forceFresh) {
-      const cached = this.getCached<DashboardSummary>(cacheKey);
-      if (cached) return cached;
-    }
-
-    const data = await this.request<DashboardSummary>('/api/dashboard');
-    this.setCached(cacheKey, data, 20000); // 20s TTL
+  public async validateSession(): Promise<{ user: User }> {
+    const data = await this.request<{ user: User }>('/api/auth/session');
+    this.applyUserScope(data.user);
     return data;
   }
 
-  // ============================
-  // STUDENTS
-  // ============================
-  public async getStudents(status: 'ALL' | 'ACTIVE' | 'INACTIVE' = 'ALL', search = '', forceFresh = false): Promise<Student[]> {
-    const cacheKey = `students_${status}_${search}`;
-    if (!forceFresh && !search) {
-      const cached = this.getCached<Student[]>(cacheKey);
-      if (cached) return cached;
+  public async getBootstrap(): Promise<BootstrapData> {
+    const data = await this.request<BootstrapData>('/api/bootstrap');
+    if (data.user) {
+      this.applyUserScope(data.user);
     }
-
-    const params = new URLSearchParams();
-    if (status !== 'ALL') params.append('status', status);
-    if (search) params.append('search', search);
-
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    const data = await this.request<Student[]>(`/api/students${qs}`);
-    
-    if (!search) {
-      this.setCached(cacheKey, data, 30000); // 30s TTL
+    if (data.settings) {
+      this.setCached('settings', data.settings);
+    }
+    if (data.dashboard) {
+      this.setCached('summary', data.dashboard);
+    }
+    if (data.students) {
+      this.setCached('students', data.students);
     }
     return data;
   }
 
-  public async getStudent(id: string): Promise<Student> {
-    const cacheKey = `student_${id}`;
-    const cached = this.getCached<Student>(cacheKey);
-    if (cached) return cached;
-
-    const data = await this.request<Student>(`/api/students/${id}`);
-    this.setCached(cacheKey, data, 30000);
-    return data;
-  }
-
-  public async createStudent(payload: Partial<Student>): Promise<Student> {
-    const res = await this.request<Student>('/api/students', {
+  public async changePassword(oldPassword: string, newPassword: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/api/auth/change-password', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ oldPassword, newPassword })
     });
-    this.invalidate('students');
-    this.invalidate('dashboard');
-    this.invalidate('class_report');
-    return res;
   }
 
-  public async updateStudent(id: string, payload: Partial<Student>): Promise<Student> {
-    const res = await this.request<Student>(`/api/students/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    });
-    this.invalidate('students');
-    this.invalidate(`student_${id}`);
-    this.invalidate(`report_${id}`);
-    this.invalidate('class_report');
-    this.invalidate('dashboard');
-    return res;
-  }
-
-  public async deleteStudent(id: string): Promise<{ mode: 'DELETED' | 'DEACTIVATED'; message: string }> {
-    const res = await this.request<{ mode: 'DELETED' | 'DEACTIVATED'; message: string }>(`/api/students/${id}`, {
-      method: 'DELETE'
-    });
-    this.invalidate('students');
-    this.invalidate(`student_${id}`);
-    this.invalidate('dashboard');
-    this.invalidate('class_report');
-    return res;
-  }
-
-  // ============================
-  // TRANSACTIONS (Pessimistic)
-  // ============================
-  public async createDeposit(payload: {
-    student_id: string;
-    amount: number;
-    description?: string;
-    transaction_date?: string;
-  }): Promise<{ transaction: Transaction; newBalance: number }> {
-    const res = await this.request<{ transaction: Transaction; newBalance: number }>('/api/transactions/deposit', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-
-    // Invalidate financial caches
-    this.invalidate('dashboard');
-    this.invalidate('students');
-    this.invalidate(`student_${payload.student_id}`);
-    this.invalidate(`report_${payload.student_id}`);
-    this.invalidate('class_report');
-    this.invalidate('transactions');
-
-    return res;
-  }
-
-  public async createWithdrawal(payload: {
-    student_id: string;
-    amount: number;
-    description?: string;
-    transaction_date?: string;
-  }): Promise<{ transaction: Transaction; newBalance: number }> {
-    const res = await this.request<{ transaction: Transaction; newBalance: number }>('/api/transactions/withdraw', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-
-    // Invalidate financial caches
-    this.invalidate('dashboard');
-    this.invalidate('students');
-    this.invalidate(`student_${payload.student_id}`);
-    this.invalidate(`report_${payload.student_id}`);
-    this.invalidate('class_report');
-    this.invalidate('transactions');
-
-    return res;
-  }
-
-  public async voidTransaction(transactionId: string, reason?: string): Promise<{ transaction: Transaction; newBalance: number }> {
-    const res = await this.request<{ transaction: Transaction; newBalance: number }>('/api/transactions/void', {
-      method: 'POST',
-      body: JSON.stringify({ transaction_id: transactionId, reason })
-    });
-
-    // Invalidate financial caches
-    this.invalidate('dashboard');
-    this.invalidate('students');
-    this.invalidate('report_');
-    this.invalidate('class_report');
-    this.invalidate('transactions');
-
-    return res;
-  }
-
-  public async getTransactions(filters?: {
-    student_id?: string;
-    type?: string;
-    startDate?: string;
-    endDate?: string;
-    status?: string;
-    limit?: number;
-  }): Promise<Transaction[]> {
-    const params = new URLSearchParams();
-    if (filters?.student_id) params.append('student_id', filters.student_id);
-    if (filters?.type) params.append('type', filters.type);
-    if (filters?.startDate) params.append('startDate', filters.startDate);
-    if (filters?.endDate) params.append('endDate', filters.endDate);
-    if (filters?.status) params.append('status', filters.status);
-    if (filters?.limit) params.append('limit', String(filters.limit));
-
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    return this.request<Transaction[]>(`/api/transactions${qs}`);
-  }
-
-  // ============================
-  // REPORTS
-  // ============================
-  public async getStudentReport(studentId: string, startDate?: string, endDate?: string, forceFresh = false): Promise<StudentReport> {
-    const cacheKey = `report_${studentId}_${startDate || ''}_${endDate || ''}`;
-    if (!forceFresh) {
-      const cached = this.getCached<StudentReport>(cacheKey);
-      if (cached) return cached;
+  public async getAccessProfile(fresh = false): Promise<AccessProfile> {
+    if (!fresh) {
+      const c = this.getCached<AccessProfile>('access_profile');
+      if (c) return c;
     }
-
-    const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    const data = await this.request<StudentReport>(`/api/students/${studentId}/report${qs}`);
-    this.setCached(cacheKey, data, 20000);
-    return data;
+    const d = await this.request<AccessProfile>('/api/access/profile');
+    this.setCached('access_profile', d);
+    return d;
   }
 
-  public async getClassReport(forceFresh = false): Promise<ClassReport> {
-    const cacheKey = 'class_report';
-    if (!forceFresh) {
-      const cached = this.getCached<ClassReport>(cacheKey);
-      if (cached) return cached;
+  public async getSummary(freshOrOptions?: boolean | { fresh?: boolean }): Promise<DashboardSummary> {
+    const fresh = typeof freshOrOptions === 'boolean' ? freshOrOptions : Boolean(freshOrOptions?.fresh);
+    if (!fresh) {
+      const c = this.getCached<DashboardSummary>('summary');
+      if (c) return c;
     }
-
-    const data = await this.request<ClassReport>('/api/reports/class');
-    this.setCached(cacheKey, data, 20000);
-    return data;
+    const d = await this.request<DashboardSummary>('/api/summary');
+    this.setCached('summary', d);
+    return d;
   }
 
-  // ============================
-  // PREFETCH HELPER
-  // ============================
-  public prefetchStudentReport(studentId: string): void {
-    if (!studentId) return;
-    const cacheKey = `report_${studentId}__`;
-    if (this.cache.has(cacheKey)) return;
-
-    // Fetch silently in background
-    this.request<StudentReport>(`/api/students/${studentId}/report`)
-      .then((data) => this.setCached(cacheKey, data, 30000))
-      .catch(() => {});
+  public async getDashboard(freshOrOptions?: boolean | { fresh?: boolean }): Promise<DashboardSummary> {
+    return this.getSummary(freshOrOptions);
   }
 
-  // ============================
-  // SETTINGS & GAS
-  // ============================
-  public async getSettings(): Promise<AppSettings> {
-    return this.request<AppSettings>('/api/settings');
+  public async getStudents(freshOrFilter?: any): Promise<Student[]> {
+    const fresh = freshOrFilter === true || (typeof freshOrFilter === 'object' && freshOrFilter?.fresh === true);
+    if (!fresh) {
+      const c = this.getCached<Student[]>('students');
+      if (c) return c;
+    }
+    const d = await this.request<Student[]>('/api/students');
+    this.setCached('students', d);
+    return d;
+  }
+
+  public async getStudentById(id: string): Promise<Student> {
+    return this.request<Student>(`/api/students/${encodeURIComponent(id)}`);
+  }
+
+  public async createStudent(student: Partial<Student>): Promise<Student> {
+    const d = await this.request<Student>('/api/students', { method: 'POST', body: JSON.stringify(student) });
+    this.clearCache();
+    return d;
+  }
+
+  public async updateStudent(id: string, student: Partial<Student>): Promise<Student> {
+    const d = await this.request<Student>(`/api/students/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(student) });
+    this.clearCache();
+    return d;
+  }
+
+  public async deleteStudent(id: string): Promise<{ message: string; mode: 'ENROLLMENT_DEACTIVATED' }> {
+    const d = await this.request<{ message: string; mode: 'ENROLLMENT_DEACTIVATED' }>(`/api/students/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    this.clearCache();
+    return d;
+  }
+
+  public async getTransactions(filter?: string | { limit?: number; student_id?: string; studentId?: string; fresh?: boolean }, fresh?: boolean): Promise<Transaction[]> {
+    const isFresh = fresh === true || (typeof filter === 'object' && filter?.fresh === true);
+    const sid = typeof filter === 'string' ? filter : (filter?.student_id || filter?.studentId || '');
+    const key = `transactions:${sid || 'all'}`;
+    if (!isFresh) {
+      const c = this.getCached<Transaction[]>(key);
+      if (c) return c;
+    }
+    const url = sid ? `/api/transactions?student_id=${encodeURIComponent(sid)}` : '/api/transactions';
+    let d = await this.request<Transaction[]>(url);
+    if (typeof filter === 'object' && filter?.limit) d = d.slice(0, filter.limit);
+    this.setCached(key, d);
+    return d;
+  }
+
+  public async deposit(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
+    const d = await this.request<TransactionResult>('/api/transactions/deposit', { method: 'POST', body: JSON.stringify(params) });
+    this.clearCache();
+    return d;
+  }
+
+  public async createDeposit(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
+    return this.deposit(params);
+  }
+
+  public async withdraw(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
+    const d = await this.request<TransactionResult>('/api/transactions/withdraw', { method: 'POST', body: JSON.stringify(params) });
+    this.clearCache();
+    return d;
+  }
+
+  public async createWithdrawal(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
+    return this.withdraw(params);
+  }
+
+  public async voidTransaction(transaction_id: string, void_reason?: string): Promise<TransactionResult> {
+    const d = await this.request<TransactionResult>('/api/transactions/void', { method: 'POST', body: JSON.stringify({ transaction_id, void_reason }) });
+    this.clearCache();
+    return d;
+  }
+
+  public async getStudentReport(studentId: string, startDate?: string, endDate?: string): Promise<StudentReport> {
+    const p = new URLSearchParams();
+    if (startDate) p.set('startDate', startDate);
+    if (endDate) p.set('endDate', endDate);
+    return this.request<StudentReport>(`/api/reports/student/${encodeURIComponent(studentId)}${p.toString() ? `?${p}` : ''}`);
+  }
+
+  public async prefetchStudentReport(studentId: string): Promise<void> {
+    try { await this.getStudentReport(studentId); } catch {}
+  }
+
+  public async getClassReport(fresh = false): Promise<ClassReport> {
+    if (!fresh) {
+      const c = this.getCached<ClassReport>('class_report');
+      if (c) return c;
+    }
+    const d = await this.request<ClassReport>('/api/reports/class');
+    this.setCached('class_report', d);
+    return d;
+  }
+
+  public async getSettings(fresh = false): Promise<AppSettings> {
+    if (!fresh) {
+      const c = this.getCached<AppSettings>('settings');
+      if (c) return c;
+    }
+    const d = await this.request<AppSettings>('/api/settings');
+    this.setCached('settings', d);
+    return d;
   }
 
   public async updateSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
-    const res = await this.request<AppSettings>('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify(settings)
-    });
-    this.invalidate('dashboard');
-    return res;
-  }
-
-  public async syncFromGas(): Promise<{ message: string }> {
-    const res = await this.request<{ message?: string } | any>('/api/sync/gas', { method: 'POST' });
+    const d = await this.request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) });
     this.clearCache();
-    const msg = (res && typeof res === 'object' && 'message' in res && typeof res.message === 'string')
-      ? res.message
-      : 'Sinkronisasi berhasil diselesaikan.';
-    return { message: msg };
+    return d;
   }
 
-  public async resetDemoData(): Promise<{ message?: string }> {
-    const res = await this.request<{ message?: string }>('/api/database/reset', { method: 'POST' });
+  public async getGasScript(fresh = false): Promise<string> {
+    if (!fresh) {
+      const c = this.getCached<string>('gas_script');
+      if (c) return c;
+    }
+    const code = (await this.request<{ code: string }>('/api/settings/gas-script')).code;
+    this.setCached('gas_script', code, 3600_000);
+    return code;
+  }
+
+  public async syncFromGas(): Promise<{ message: string; studentCount: number; transactionCount: number }> {
+    const d = await this.request<any>('/api/sync/gas', { method: 'POST' });
     this.clearCache();
-    return res;
+    return d;
   }
 
-  public async getGasScript(): Promise<string> {
-    const res = await this.request<{ script: string }>('/api/gas/script-export');
-    return res.script;
+  public async refreshCache(): Promise<{ message: string; studentCount?: number; transactionCount?: number }> {
+    const d = await this.request<any>('/api/sync/refresh-cache', { method: 'POST' });
+    this.clearCache();
+    return d;
   }
 }
 

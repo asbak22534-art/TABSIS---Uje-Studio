@@ -1,4 +1,18 @@
 // Utility functions for Tabungan Siswa
+import * as XLSX from 'xlsx';
+
+
+/** Business date in Asia/Jakarta as YYYY-MM-DD. */
+export function getJakartaToday(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 export function formatRupiah(amount: number | undefined | null): string {
   if (amount === undefined || amount === null || isNaN(amount)) {
@@ -40,9 +54,79 @@ export function terbilangRupiah(n: number): string {
   return spell(Math.floor(n)).trim() + ' Rupiah';
 }
 
+/**
+ * Format Standard Indonesian Date: DD/MM/YYYY
+ */
+export function formatTanggalIndonesia(dateInput: string | number | Date | undefined | null): string {
+  if (!dateInput) return '-';
+  try {
+    if (typeof dateInput === 'string') {
+      const clean = dateInput.trim();
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) return clean;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+        const [y, m, d] = clean.split('-');
+        return `${d}/${m}/${y}`;
+      }
+      if (/^\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}/.test(clean)) {
+        return clean.split(' ')[0];
+      }
+    }
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return String(dateInput);
+
+    const pad = (n: number) => (n < 10 ? '0' : '') + n;
+    const day = pad(d.getDate());
+    const month = pad(d.getMonth() + 1);
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  } catch {
+    return String(dateInput);
+  }
+}
+
+/**
+ * Format Standard Indonesian Date & Time: DD/MM/YYYY HH:mm:ss
+ */
+export function formatWaktuIndonesia(dateInput: string | number | Date | undefined | null): string {
+  if (!dateInput) return '-';
+  try {
+    if (typeof dateInput === 'string') {
+      const clean = dateInput.trim();
+      if (/^\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}:\d{2}$/.test(clean)) return clean;
+      if (/^\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/.test(clean)) return `${clean}:00`;
+    }
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return String(dateInput);
+
+    const pad = (n: number) => (n < 10 ? '0' : '') + n;
+    const day = pad(d.getDate());
+    const month = pad(d.getMonth() + 1);
+    const year = d.getFullYear();
+    const hours = pad(d.getHours());
+    const minutes = pad(d.getMinutes());
+    const seconds = pad(d.getSeconds());
+
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+  } catch {
+    return String(dateInput);
+  }
+}
+
+/**
+ * Long Date format for reports and receipts: e.g. 26 Agustus 2026
+ */
 export function formatDateIndo(dateStr: string | undefined | null): string {
   if (!dateStr) return '-';
   try {
+    if (typeof dateStr === 'string' && /^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+      const [d, m, y] = dateStr.split('/');
+      const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+      return new Intl.DateTimeFormat('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }).format(dateObj);
+    }
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return new Intl.DateTimeFormat('id-ID', {
@@ -55,21 +139,86 @@ export function formatDateIndo(dateStr: string | undefined | null): string {
   }
 }
 
+/**
+ * Indonesian DateTime format: DD/MM/YYYY HH:mm:ss
+ */
 export function formatDateTimeIndo(isoStr: string | undefined | null): string {
-  if (!isoStr) return '-';
-  try {
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return isoStr;
-    return new Intl.DateTimeFormat('id-ID', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(d);
-  } catch {
-    return isoStr;
+  return formatWaktuIndonesia(isoStr);
+}
+
+/**
+ * Export structured data directly to genuine Microsoft Excel (.xlsx) file
+ * Each data row is properly placed into separate Excel columns matching Google Sheets.
+ */
+export function downloadExcel(
+  filename: string,
+  rowsOrSheets: (string | number | boolean | null | undefined)[][] | { name: string; data: (string | number | boolean | null | undefined)[][] }[],
+  defaultSheetName = 'Sheet1'
+): void {
+  const wb = XLSX.utils.book_new();
+
+  if (Array.isArray(rowsOrSheets) && rowsOrSheets.length > 0 && Array.isArray(rowsOrSheets[0])) {
+    // Single sheet table data
+    const rows = rowsOrSheets as (string | number | boolean | null | undefined)[][];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Auto calculate column widths
+    const maxCols = Math.max(...rows.map(r => (Array.isArray(r) ? r.length : 0)), 1);
+    const colWidths = [];
+    for (let c = 0; c < maxCols; c++) {
+      let maxLen = 10;
+      for (let r = 0; r < rows.length; r++) {
+        const val = rows[r] ? rows[r][c] : undefined;
+        if (val !== undefined && val !== null) {
+          const str = String(val);
+          if (str.length > maxLen) {
+            maxLen = Math.min(str.length + 3, 45);
+          }
+        }
+      }
+      colWidths.push({ wch: maxLen });
+    }
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, defaultSheetName.substring(0, 31));
+  } else if (Array.isArray(rowsOrSheets)) {
+    // Multiple sheet entries
+    for (const sheet of (rowsOrSheets as { name: string; data: (string | number | boolean | null | undefined)[][] }[])) {
+      const ws = XLSX.utils.aoa_to_sheet(sheet.data);
+      const maxCols = Math.max(...sheet.data.map(r => (Array.isArray(r) ? r.length : 0)), 1);
+      const colWidths = [];
+      for (let c = 0; c < maxCols; c++) {
+        let maxLen = 10;
+        for (let r = 0; r < sheet.data.length; r++) {
+          const val = sheet.data[r] ? sheet.data[r][c] : undefined;
+          if (val !== undefined && val !== null) {
+            const str = String(val);
+            if (str.length > maxLen) {
+              maxLen = Math.min(str.length + 3, 45);
+            }
+          }
+        }
+        colWidths.push({ wch: maxLen });
+      }
+      ws['!cols'] = colWidths;
+      XLSX.utils.book_append_sheet(wb, ws, sheet.name.substring(0, 31));
+    }
   }
+
+  const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([excelBuffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const link = document.createElement('a');
+  const finalFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', finalFilename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function downloadCSV(filename: string, rows: (string | number | boolean | null | undefined)[][]): void {
@@ -78,6 +227,12 @@ export function downloadCSV(filename: string, rows: (string | number | boolean |
     for (let j = 0; j < row.length; j++) {
       const cell = row[j];
       let innerValue = cell === null || cell === undefined ? '' : String(cell);
+
+      // Formula Injection Prevention: Prefix dangerous characters (=, +, -, @) with single quote (')
+      if (/^[=+\-@]/.test(innerValue)) {
+        innerValue = "'" + innerValue;
+      }
+
       let result = innerValue.replace(/"/g, '""');
       if (result.search(/("|,|\n)/g) >= 0) {
         result = '"' + result + '"';
@@ -103,6 +258,7 @@ export function downloadCSV(filename: string, rows: (string | number | boolean |
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -136,3 +292,4 @@ _Terima kasih telah membiasakan ananda gemar menabung sejak dini._`;
 
   return encodeURIComponent(text);
 }
+
