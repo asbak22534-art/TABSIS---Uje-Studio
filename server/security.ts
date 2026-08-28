@@ -15,6 +15,12 @@ const autoVercelOrigin = process.env.VERCEL_PROJECT_PRODUCTION_URL
 const rawOrigin = process.env.APP_ORIGIN?.trim() || autoVercelOrigin;
 const normalizedOrigin = rawOrigin ? (rawOrigin.startsWith('http') ? rawOrigin : `https://${rawOrigin}`) : '';
 
+export function isValidGasUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  return /^https:\/\/script\.google\.com\/macros\/s\/[^\s/]+\/exec$/.test(trimmed);
+}
+
 export const CONFIG = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   PORT: Number(process.env.PORT || 3000),
@@ -28,46 +34,46 @@ export const CONFIG = {
   TRUST_PROXY: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!process.env.VERCEL
 };
 
-export function getEnvironmentDiagnostics() {
+console.log('[BOOT_CONFIG]', {
+  nodeEnv: CONFIG.NODE_ENV,
+  sessionSecretLength: CONFIG.SESSION_SECRET.length,
+  gasSecretLength: CONFIG.GAS_API_SECRET.length,
+  gasUrlValid: isValidGasUrl(CONFIG.GAS_SCRIPT_URL),
+  appOrigin: CONFIG.APP_ORIGIN
+});
+
+export function getHealthConfigStatus() {
   const hasSession = Boolean(process.env.SESSION_SECRET && !process.env.SESSION_SECRET.includes('CHANGE_ME'));
   const sessionValid = Boolean(hasSession && (process.env.SESSION_SECRET?.trim().length || 0) >= 32);
   const hasGasUrl = Boolean(CONFIG.GAS_SCRIPT_URL);
-  const gasUrlValid = Boolean(hasGasUrl && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(CONFIG.GAS_SCRIPT_URL));
+  const gasUrlValid = isValidGasUrl(CONFIG.GAS_SCRIPT_URL);
   const hasGasSecret = Boolean(CONFIG.GAS_API_SECRET && !CONFIG.GAS_API_SECRET.includes('CHANGE_ME'));
   const gasSecretValid = Boolean(hasGasSecret && CONFIG.GAS_API_SECRET.length >= 32);
   const hasOrigin = Boolean(CONFIG.APP_ORIGIN);
 
   return {
-    nodeEnv: CONFIG.NODE_ENV,
-    hasSessionSecret: hasSession,
-    sessionSecretValidLength: sessionValid,
-    hasGasScriptUrl: hasGasUrl,
+    sessionSecretConfigured: hasSession,
+    sessionSecretLengthValid: sessionValid,
+    gasScriptUrlConfigured: hasGasUrl,
     gasScriptUrlValid: gasUrlValid,
-    hasGasApiSecret: hasGasSecret,
-    gasApiSecretValidLength: gasSecretValid,
-    hasAppOrigin: hasOrigin
+    gasSecretConfigured: hasGasSecret,
+    gasSecretLengthValid: gasSecretValid,
+    appOriginConfigured: hasOrigin
   };
 }
 
-export function getEnvironmentConfigErrors(): string[] {
+export function getEnvironmentErrors(): string[] {
   const errors: string[] = [];
   if (!CONFIG.SESSION_SECRET || CONFIG.SESSION_SECRET.length < 32 || CONFIG.SESSION_SECRET.includes('CHANGE_ME')) {
     errors.push('SESSION_SECRET wajib berupa secret statis minimal 32 karakter.');
   }
-  if (!CONFIG.GAS_SCRIPT_URL || !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(CONFIG.GAS_SCRIPT_URL)) {
+  if (!isValidGasUrl(CONFIG.GAS_SCRIPT_URL)) {
     errors.push('GAS_SCRIPT_URL wajib berupa URL deployment Apps Script yang berakhiran /exec.');
   }
   if (!CONFIG.GAS_API_SECRET || CONFIG.GAS_API_SECRET.length < 32 || CONFIG.GAS_API_SECRET.includes('CHANGE_ME')) {
     errors.push('GAS_API_SECRET wajib berupa secret minimal 32 karakter.');
   }
   return errors;
-}
-
-export function validateEnvironmentOrExit(): void {
-  const errors = getEnvironmentConfigErrors();
-  if (errors.length) {
-    console.warn(`[WARN] Konfigurasi environment belum lengkap:\n- ${errors.join('\n- ')}`);
-  }
 }
 
 export function hashPassword(password: string): string {

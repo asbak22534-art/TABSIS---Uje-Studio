@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { db } from './db';
-import { GAS_SCRIPT_CODE } from './gasTemplate';
+import { db } from './db.js';
+import { GAS_SCRIPT_CODE } from './gasTemplate.js';
 import type { User } from '../src/types';
 import {
   CONFIG,
@@ -12,9 +12,9 @@ import {
   loginRateLimiter,
   mutationRateLimiter,
   syncRateLimiter,
-  getEnvironmentConfigErrors,
-  getEnvironmentDiagnostics
-} from './security';
+  getEnvironmentErrors,
+  getHealthConfigStatus
+} from './security.js';
 
 declare global {
   namespace Express {
@@ -75,20 +75,16 @@ export function createApp() {
   };
 
   app.get('/api/health', (_req, res) => {
-    const configErrors = getEnvironmentConfigErrors();
     return res.status(200).json({
-      status: configErrors.length === 0 ? 'ok' : 'degraded',
-      service: 'Tabungan Siswa Backend API',
+      status: 'ok',
       version: '5.0.0-multirole',
       environment: CONFIG.NODE_ENV,
-      configured: configErrors.length === 0,
-      missingConfig: configErrors,
-      timestamp: new Date().toISOString()
+      config: getHealthConfigStatus()
     });
   });
 
   app.get(['/api/diagnostics', '/api/health/diagnostics'], (_req, res) => {
-    return res.status(200).json(getEnvironmentDiagnostics());
+    return res.status(200).json(getHealthConfigStatus());
   });
 
   app.post('/api/auth/login', loginRateLimiter, async (req, res) => {
@@ -98,6 +94,16 @@ export function createApp() {
         return res.status(400).json({
           success: false,
           error: { code: 'INVALID_CREDENTIALS', message: 'Username dan kata sandi wajib diisi.' }
+        });
+      }
+      const envErrors = getEnvironmentErrors();
+      if (envErrors.length > 0) {
+        return res.status(503).json({
+          success: false,
+          error: {
+            code: 'SERVER_MISCONFIGURED',
+            message: 'Konfigurasi server belum lengkap.'
+          }
         });
       }
       const { user, signedToken } = await db.loginUser(username, password);
@@ -113,7 +119,7 @@ export function createApp() {
           success: false,
           error: {
             code: 'SERVER_MISCONFIGURED',
-            message: err.message || 'Konfigurasi backend belum lengkap. Silakan periksa Environment Variables.'
+            message: 'Konfigurasi server belum lengkap.'
           }
         });
       }
@@ -132,7 +138,7 @@ export function createApp() {
           success: false,
           error: {
             code: 'SERVER_MISCONFIGURED',
-            message: 'Konfigurasi Google Apps Script belum diatur di Environment Variables.'
+            message: 'Konfigurasi server belum lengkap.'
           }
         });
       }

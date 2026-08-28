@@ -24,8 +24,9 @@ import {
   getJakartaToday,
   hashPassword,
   verifyPassword,
-  createSignedSessionToken
-} from './security';
+  createSignedSessionToken,
+  isValidGasUrl
+} from './security.js';
 
 interface AuthRecord {
   user_id: string;
@@ -112,14 +113,14 @@ export class DatabaseService {
     context?: { user_id?: string; role?: UserRole; active_class_section_id?: string }
   ): Promise<T> {
     const gasUrl = CONFIG.GAS_SCRIPT_URL;
-    if (!gasUrl || !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(gasUrl)) {
-      const err = new Error('GAS_SCRIPT_URL belum dikonfigurasi atau tidak berakhiran /exec di environment variables.');
+    if (!isValidGasUrl(gasUrl)) {
+      const err = new Error('Konfigurasi server belum lengkap.');
       (err as any).code = 'SERVER_MISCONFIGURED';
       (err as any).status = 503;
       throw err;
     }
     if (!CONFIG.GAS_API_SECRET || CONFIG.GAS_API_SECRET.length < 32 || CONFIG.GAS_API_SECRET.includes('CHANGE_ME')) {
-      const err = new Error('GAS_API_SECRET belum dikonfigurasi (minimal 32 karakter) di environment variables.');
+      const err = new Error('Konfigurasi server belum lengkap.');
       (err as any).code = 'SERVER_MISCONFIGURED';
       (err as any).status = 503;
       throw err;

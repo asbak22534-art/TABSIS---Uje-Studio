@@ -1,4 +1,4 @@
-import { createApp } from '../server/createApp';
+import { createApp } from '../server/createApp.js';
 
 const app = createApp();
 
