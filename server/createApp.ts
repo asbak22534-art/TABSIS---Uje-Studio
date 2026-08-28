@@ -11,7 +11,9 @@ import {
   sameOriginProtection,
   loginRateLimiter,
   mutationRateLimiter,
-  syncRateLimiter
+  syncRateLimiter,
+  getEnvironmentConfigErrors,
+  getEnvironmentDiagnostics
 } from './security';
 
 declare global {
@@ -72,11 +74,32 @@ export function createApp() {
     return true;
   };
 
-  app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'Tabungan Siswa Backend API', version: '5.0.0-multirole', environment: CONFIG.NODE_ENV, timestamp: new Date().toISOString() }));
+  app.get('/api/health', (_req, res) => {
+    const configErrors = getEnvironmentConfigErrors();
+    return res.status(200).json({
+      status: configErrors.length === 0 ? 'ok' : 'degraded',
+      service: 'Tabungan Siswa Backend API',
+      version: '5.0.0-multirole',
+      environment: CONFIG.NODE_ENV,
+      configured: configErrors.length === 0,
+      missingConfig: configErrors,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.get(['/api/diagnostics', '/api/health/diagnostics'], (_req, res) => {
+    return res.status(200).json(getEnvironmentDiagnostics());
+  });
 
   app.post('/api/auth/login', loginRateLimiter, async (req, res) => {
     try {
       const { username, password } = req.body || {};
+      if (!username || !password) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_CREDENTIALS', message: 'Username dan kata sandi wajib diisi.' }
+        });
+      }
       const { user, signedToken } = await db.loginUser(username, password);
       const opts = getSessionCookieOptions(req);
       const parts = [`tabungan_session=${encodeURIComponent(signedToken)}`, 'HttpOnly', 'Path=/', `SameSite=${opts.sameSite}`, `Max-Age=${CONFIG.SESSION_TTL_SECONDS}`];
@@ -85,7 +108,37 @@ export function createApp() {
       res.setHeader('Set-Cookie', parts.join('; '));
       return res.json({ success: true, data: { user, token: signedToken } });
     } catch (err: any) {
-      const message = CONFIG.NODE_ENV === 'production' ? 'Username atau password salah.' : (err.message || 'Username atau password salah.');
+      if (err?.code === 'SERVER_MISCONFIGURED' || err?.status === 503) {
+        return res.status(503).json({
+          success: false,
+          error: {
+            code: 'SERVER_MISCONFIGURED',
+            message: err.message || 'Konfigurasi backend belum lengkap. Silakan periksa Environment Variables.'
+          }
+        });
+      }
+      if (err?.status === 502 || err?.code?.startsWith('GAS_')) {
+        return res.status(502).json({
+          success: false,
+          error: {
+            code: err.code || 'GAS_ERROR',
+            message: err.message || 'Gagal berkomunikasi dengan Google Apps Script.'
+          }
+        });
+      }
+      const isGasConfigError = String(err?.message || '').includes('GAS_SCRIPT_URL') || String(err?.message || '').includes('GAS_API_SECRET');
+      if (isGasConfigError) {
+        return res.status(503).json({
+          success: false,
+          error: {
+            code: 'SERVER_MISCONFIGURED',
+            message: 'Konfigurasi Google Apps Script belum diatur di Environment Variables.'
+          }
+        });
+      }
+      const message = CONFIG.NODE_ENV === 'production' && !String(err?.message || '').includes('GAS_')
+        ? 'Username atau kata sandi tidak sesuai.'
+        : (err.message || 'Username atau kata sandi tidak sesuai.');
       return res.status(401).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message } });
     }
   });
@@ -226,6 +279,19 @@ export function createApp() {
   app.post('/api/sync/refresh-cache', requireAuth, syncRateLimiter, async (req, res) => {
     try { return res.json({ success: true, data: await db.syncFromGas(req.user!) }); }
     catch (err: any) { return res.status(503).json({ success: false, error: { code: 'SYNC_ERROR', message: err.message } }); }
+  });
+
+  // Global Error Handler
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('[API Unhandled Error]', err);
+    const status = typeof err?.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+    res.status(status).json({
+      success: false,
+      error: {
+        code: err?.code || 'INTERNAL_SERVER_ERROR',
+        message: err?.message || 'Terjadi kesalahan pada server internal.'
+      }
+    });
   });
 
   return app;

@@ -112,7 +112,19 @@ export class DatabaseService {
     context?: { user_id?: string; role?: UserRole; active_class_section_id?: string }
   ): Promise<T> {
     const gasUrl = CONFIG.GAS_SCRIPT_URL;
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(gasUrl)) throw new Error('GAS_SCRIPT_URL_NOT_CONFIGURED: URL Google Apps Script tidak valid.');
+    if (!gasUrl || !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(gasUrl)) {
+      const err = new Error('GAS_SCRIPT_URL belum dikonfigurasi atau tidak berakhiran /exec di environment variables.');
+      (err as any).code = 'SERVER_MISCONFIGURED';
+      (err as any).status = 503;
+      throw err;
+    }
+    if (!CONFIG.GAS_API_SECRET || CONFIG.GAS_API_SECRET.length < 32 || CONFIG.GAS_API_SECRET.includes('CHANGE_ME')) {
+      const err = new Error('GAS_API_SECRET belum dikonfigurasi (minimal 32 karakter) di environment variables.');
+      (err as any).code = 'SERVER_MISCONFIGURED';
+      (err as any).status = 503;
+      throw err;
+    }
+
     const payload = {
       action,
       secret: CONFIG.GAS_API_SECRET,
@@ -135,18 +147,36 @@ export class DatabaseService {
         signal: controller.signal,
         redirect: 'follow'
       });
-      if (!response.ok) throw new Error(`Google Apps Script HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok) {
+        const err = new Error(`Layanan Google Apps Script merespons status ${response.status}: ${response.statusText}`);
+        (err as any).code = 'GAS_HTTP_ERROR';
+        (err as any).status = 502;
+        throw err;
+      }
       const text = await response.text();
       let json: ApiResponse<T>;
-      try { json = JSON.parse(text); } catch { throw new Error(`Respons Google Apps Script bukan JSON valid: ${text.slice(0, 160)}`); }
+      try {
+        json = JSON.parse(text);
+      } catch {
+        const err = new Error('Respons Google Apps Script bukan format JSON valid.');
+        (err as any).code = 'GAS_INVALID_RESPONSE';
+        (err as any).status = 502;
+        throw err;
+      }
       if (!json.success) {
-        const err = new Error(json.error?.message || 'Permintaan Google Apps Script gagal.');
+        const err = new Error(json.error?.message || 'Permintaan Google Apps Script gagal diproses.');
         (err as any).code = json.error?.code || 'GAS_ERROR';
+        (err as any).status = 502;
         throw err;
       }
       return json.data as T;
     } catch (err: any) {
-      if (err?.name === 'AbortError') throw new Error('Koneksi Google Apps Script timeout (>28 detik).');
+      if (err?.name === 'AbortError') {
+        const timeoutErr = new Error('Koneksi Google Apps Script timeout (>28 detik).');
+        (timeoutErr as any).code = 'GAS_TIMEOUT';
+        (timeoutErr as any).status = 504;
+        throw timeoutErr;
+      }
       throw err;
     } finally {
       clearTimeout(timeout);

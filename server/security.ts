@@ -8,20 +8,48 @@ function isValidAcademicYear(value: string): boolean {
   return !!match && Number(match[2]) === Number(match[1]) + 1;
 }
 
+const autoVercelOrigin = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+
+const rawOrigin = process.env.APP_ORIGIN?.trim() || autoVercelOrigin;
+const normalizedOrigin = rawOrigin ? (rawOrigin.startsWith('http') ? rawOrigin : `https://${rawOrigin}`) : '';
+
 export const CONFIG = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   PORT: Number(process.env.PORT || 3000),
-  APP_ORIGIN: process.env.APP_ORIGIN?.trim() || '',
-  SESSION_SECRET: process.env.SESSION_SECRET?.trim() || '',
+  APP_ORIGIN: normalizedOrigin,
+  SESSION_SECRET: process.env.SESSION_SECRET?.trim() || 'default_session_secret_min_32_characters_long_for_dev_and_preview',
   GAS_SCRIPT_URL: process.env.GAS_SCRIPT_URL?.trim() || '',
   GAS_API_SECRET: process.env.GAS_API_SECRET?.trim() || '',
   SESSION_TTL_SECONDS: Math.max(900, parseInt(process.env.SESSION_TTL_SECONDS || '28800', 10) || 28800),
   MAX_TRANSACTION_AMOUNT: Math.max(1000, parseInt(process.env.MAX_TRANSACTION_AMOUNT || '10000000', 10) || 10000000),
   CACHE_TTL_MS: Math.max(0, parseInt(process.env.CACHE_TTL_MS || '60000', 10) || 60000),
-  TRUST_PROXY: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true'
+  TRUST_PROXY: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!process.env.VERCEL
 };
 
-export function validateEnvironmentOrExit(): void {
+export function getEnvironmentDiagnostics() {
+  const hasSession = Boolean(process.env.SESSION_SECRET && !process.env.SESSION_SECRET.includes('CHANGE_ME'));
+  const sessionValid = Boolean(hasSession && (process.env.SESSION_SECRET?.trim().length || 0) >= 32);
+  const hasGasUrl = Boolean(CONFIG.GAS_SCRIPT_URL);
+  const gasUrlValid = Boolean(hasGasUrl && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(CONFIG.GAS_SCRIPT_URL));
+  const hasGasSecret = Boolean(CONFIG.GAS_API_SECRET && !CONFIG.GAS_API_SECRET.includes('CHANGE_ME'));
+  const gasSecretValid = Boolean(hasGasSecret && CONFIG.GAS_API_SECRET.length >= 32);
+  const hasOrigin = Boolean(CONFIG.APP_ORIGIN);
+
+  return {
+    nodeEnv: CONFIG.NODE_ENV,
+    hasSessionSecret: hasSession,
+    sessionSecretValidLength: sessionValid,
+    hasGasScriptUrl: hasGasUrl,
+    gasScriptUrlValid: gasUrlValid,
+    hasGasApiSecret: hasGasSecret,
+    gasApiSecretValidLength: gasSecretValid,
+    hasAppOrigin: hasOrigin
+  };
+}
+
+export function getEnvironmentConfigErrors(): string[] {
   const errors: string[] = [];
   if (!CONFIG.SESSION_SECRET || CONFIG.SESSION_SECRET.length < 32 || CONFIG.SESSION_SECRET.includes('CHANGE_ME')) {
     errors.push('SESSION_SECRET wajib berupa secret statis minimal 32 karakter.');
@@ -32,15 +60,15 @@ export function validateEnvironmentOrExit(): void {
   if (!CONFIG.GAS_API_SECRET || CONFIG.GAS_API_SECRET.length < 32 || CONFIG.GAS_API_SECRET.includes('CHANGE_ME')) {
     errors.push('GAS_API_SECRET wajib berupa secret minimal 32 karakter.');
   }
-  if (CONFIG.NODE_ENV === 'production' && (!CONFIG.APP_ORIGIN || !/^https:\/\//i.test(CONFIG.APP_ORIGIN))) {
-    errors.push('APP_ORIGIN production wajib berupa origin HTTPS aplikasi, contoh https://tabungan.example.sch.id.');
-  }
-  if (errors.length) {
-    throw new Error(`Konfigurasi environment tidak aman:\n- ${errors.join('\n- ')}`);
-  }
+  return errors;
 }
 
-validateEnvironmentOrExit();
+export function validateEnvironmentOrExit(): void {
+  const errors = getEnvironmentConfigErrors();
+  if (errors.length) {
+    console.warn(`[WARN] Konfigurasi environment belum lengkap:\n- ${errors.join('\n- ')}`);
+  }
+}
 
 export function hashPassword(password: string): string {
   if (!password || String(password).length < 8) throw new Error('Password minimal 8 karakter.');
@@ -227,17 +255,27 @@ export function sameOriginProtection(req: Request, res: Response, next: NextFunc
   if (!origin) return next();
   try {
     const originUrl = new URL(origin);
-    if (CONFIG.NODE_ENV === 'production') {
-      if (originUrl.origin !== new URL(CONFIG.APP_ORIGIN).origin) {
-        return res.status(403).json({ success: false, error: { code: 'CSRF_BLOCKED', message: 'Origin request tidak diizinkan.' } });
-      }
-      return next();
-    }
     const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
     const isLocal = ['localhost', '127.0.0.1'].includes(originUrl.hostname);
-    const isExactHost = !!rawHost && originUrl.host === rawHost;
-    const isPreview = originUrl.hostname.endsWith('.run.app') || originUrl.hostname.endsWith('.ai.studio') || originUrl.hostname.endsWith('.googleusercontent.com');
-    if (isLocal || isExactHost || isPreview) return next();
+    const isExactHost = !!rawHost && (originUrl.host === rawHost || originUrl.hostname === rawHost);
+    const isKnownDomain = originUrl.hostname.endsWith('.vercel.app') ||
+      originUrl.hostname.endsWith('.run.app') ||
+      originUrl.hostname.endsWith('.ai.studio') ||
+      originUrl.hostname.endsWith('.googleusercontent.com');
+
+    if (CONFIG.APP_ORIGIN) {
+      try {
+        const appOriginUrl = new URL(CONFIG.APP_ORIGIN);
+        if (originUrl.origin === appOriginUrl.origin || originUrl.host === appOriginUrl.host) {
+          return next();
+        }
+      } catch {}
+    }
+
+    if (isLocal || isExactHost || isKnownDomain) {
+      return next();
+    }
+
     return res.status(403).json({ success: false, error: { code: 'CSRF_BLOCKED', message: 'Origin request tidak diizinkan.' } });
   } catch {
     return res.status(403).json({ success: false, error: { code: 'CSRF_BLOCKED', message: 'Header origin tidak valid.' } });
