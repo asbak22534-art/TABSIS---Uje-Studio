@@ -338,29 +338,39 @@ export class DatabaseService {
           transactionCount: Number(s.transactionCount) || 0,
           ledgerError: Number(s.balance) < 0
         })) : [];
-        const transactions: Transaction[] = Array.isArray(remote?.transactions) ? remote.transactions.map((t: any) => ({
-          transaction_id: String(t.transaction_id || ''),
-          enrollment_id: String(t.enrollment_id || ''),
-          student_id: String(t.nisn || '').replace(/^'/, '').trim(),
-          nisn: String(t.nisn || '').replace(/^'/, '').trim(),
-          nama: sanitizeText(t.nama, 100),
-          class_section_id: String(t.class_section_id || section.class_section_id),
-          academic_year: String(t.academic_year || section.academic_year),
-          kelas: String(t.class_name || t.kelas || section.class_name),
-          transaction_type: String(t.transaction_type || '').toUpperCase() === 'PENARIKAN' ? 'PENARIKAN' : 'SETORAN',
-          amount: Number(t.amount) || 0,
-          transaction_date: normalizeRemoteDate(t.transaction_date),
-          description: sanitizeText(t.description, 200),
-          created_by_user_id: String(t.created_by_user_id || ''),
-          created_by: sanitizeText(t.created_by_name || t.created_by, 100),
-          created_at: t.created_at || '',
-          updated_at: t.updated_at || '',
-          status: String(t.status || 'ACTIVE').toUpperCase() === 'VOID' ? 'VOID' : 'ACTIVE',
-          void_reason: sanitizeText(t.void_reason, 250),
-          voided_by_user_id: String(t.voided_by_user_id || ''),
-          voided_by: sanitizeText(t.voided_by_name || '', 100),
-          voided_at: t.voided_at || ''
-        })) : [];
+        const studentsMap = new Map(students.map((s) => [s.nisn, s]));
+        const transactions: Transaction[] = Array.isArray(remote?.transactions) ? remote.transactions.map((t: any) => {
+          const nisn = String(t.nisn || t.student_nisn || t.student_id || '').replace(/^'/, '').trim();
+          const student = studentsMap.get(nisn);
+          const studentNama = sanitizeText(t.student_nama || t.nama || student?.nama, 100);
+          return {
+            transaction_id: String(t.transaction_id || ''),
+            enrollment_id: String(t.enrollment_id || student?.enrollment_id || ''),
+            student_id: nisn,
+            nisn: nisn,
+            nama: studentNama,
+            student_nama: studentNama,
+            student_nisn: nisn,
+            class_section_id: String(t.class_section_id || section.class_section_id),
+            academic_year: String(t.academic_year || section.academic_year),
+            kelas: String(t.class_name || t.kelas || section.class_name),
+            student_kelas: String(t.class_name || t.kelas || section.class_name),
+            student_academic_year: String(t.academic_year || section.academic_year),
+            transaction_type: String(t.transaction_type || '').toUpperCase() === 'PENARIKAN' ? 'PENARIKAN' : 'SETORAN',
+            amount: Number(t.amount) || 0,
+            transaction_date: normalizeRemoteDate(t.transaction_date),
+            description: sanitizeText(t.description, 200),
+            created_by_user_id: String(t.created_by_user_id || ''),
+            created_by: sanitizeText(t.created_by_name || t.created_by, 100),
+            created_at: t.created_at || '',
+            updated_at: t.updated_at || '',
+            status: String(t.status || 'ACTIVE').toUpperCase() === 'VOID' ? 'VOID' : 'ACTIVE',
+            void_reason: sanitizeText(t.void_reason, 250),
+            voided_by_user_id: String(t.voided_by_user_id || ''),
+            voided_by: sanitizeText(t.voided_by_name || '', 100),
+            voided_at: t.voided_at || ''
+          };
+        }) : [];
         const bundle: ScopeBundle = { settings: remote?.settings || {}, students, transactions, section };
         return this.setCache(this.scopeCache, key, bundle);
       } finally {

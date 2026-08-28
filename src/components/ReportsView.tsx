@@ -84,9 +84,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
       const rows = allTrx.map((t) => [
         t.transaction_id,
         t.transaction_date,
-        t.student_nisn || '-',
-        t.student_nama || '-',
-        t.student_kelas || '-',
+        t.student_nisn || t.nisn || '-',
+        t.student_nama || t.nama || '-',
+        t.student_kelas || t.kelas || '-',
         t.transaction_type,
         t.amount.toString(),
         t.description,

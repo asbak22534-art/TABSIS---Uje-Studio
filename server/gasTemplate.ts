@@ -453,9 +453,26 @@ function getStudentsForSection(section, context) {
 function getTransactionsForSection(section) {
   var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
   var h = ensureHeaders(sheet, TRANSACTION_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues(), out = [];
+  var studentsMap = {};
+  try {
+    var studentSheet = ss.getSheetByName(SHEET_NAMES.STUDENTS);
+    if (studentSheet) {
+      var sh = ensureHeaders(studentSheet, STUDENT_HEADERS), si = headerIndexMap(sh), srows = studentSheet.getDataRange().getValues();
+      for (var s = 1; s < srows.length; s++) {
+        var snisn = normalizeNisnLoose(srows[s][si.nisn]);
+        if (snisn) studentsMap[snisn] = String(srows[s][si.nama] || '').trim();
+      }
+    }
+  } catch(e) {}
+
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][idx.class_section_id] || '').trim() !== section.class_section_id) continue;
-    out.push(transactionFromRow(rows[i], idx));
+    var trx = transactionFromRow(rows[i], idx);
+    if (!trx.nama && studentsMap[trx.nisn]) {
+      trx.nama = studentsMap[trx.nisn];
+      trx.student_nama = studentsMap[trx.nisn];
+    }
+    out.push(trx);
   }
   return out;
 }
@@ -815,8 +832,9 @@ function teacherAssignmentExists(sheet, userId, sectionId) { var h = ensureHeade
 function findUserByIdOrUsername(key) { var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.USERS), h = ensureHeaders(sheet, USER_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues(); for (var i = 1; i < rows.length; i++) { var id = String(rows[i][idx.user_id] || '').trim(), username = String(rows[i][idx.username] || '').trim(); if (id === key || username === key) return { user_id: id, username: username }; } return null; }
 
 function transactionFromRow(row, idx) {
+  var nama = String(row[idx.nama] || '').trim(), nisn = normalizeNisnLoose(row[idx.nisn]), cls = String(row[idx.class_name] || '').trim(), yr = String(row[idx.academic_year] || '').trim();
   return {
-    transaction_id: String(row[idx.transaction_id] || '').trim(), enrollment_id: String(row[idx.enrollment_id] || '').trim(), nisn: normalizeNisnLoose(row[idx.nisn]), nama: String(row[idx.nama] || '').trim(), class_section_id: String(row[idx.class_section_id] || '').trim(), academic_year: String(row[idx.academic_year] || '').trim(), class_name: String(row[idx.class_name] || '').trim(), transaction_type: String(row[idx.transaction_type] || '').toUpperCase(), amount: parseMoney(row[idx.amount]), transaction_date: normalizeBusinessDate(row[idx.transaction_date]), description: String(row[idx.description] || '').trim(), created_by_user_id: String(row[idx.created_by_user_id] || '').trim(), created_by_name: String(row[idx.created_by_name] || '').trim(), created_at: formatAnyDateTime(row[idx.created_at]), updated_at: formatAnyDateTime(row[idx.updated_at]), status: String(row[idx.status] || 'ACTIVE').toUpperCase() === 'VOID' ? 'VOID' : 'ACTIVE', void_reason: String(row[idx.void_reason] || '').trim(), voided_by_user_id: String(row[idx.voided_by_user_id] || '').trim(), voided_by_name: String(row[idx.voided_by_name] || '').trim(), voided_at: formatAnyDateTime(row[idx.voided_at])
+    transaction_id: String(row[idx.transaction_id] || '').trim(), enrollment_id: String(row[idx.enrollment_id] || '').trim(), nisn: nisn, nama: nama, student_nama: nama, student_nisn: nisn, student_kelas: cls, student_academic_year: yr, class_section_id: String(row[idx.class_section_id] || '').trim(), academic_year: yr, class_name: cls, transaction_type: String(row[idx.transaction_type] || '').toUpperCase(), amount: parseMoney(row[idx.amount]), transaction_date: normalizeBusinessDate(row[idx.transaction_date]), description: String(row[idx.description] || '').trim(), created_by_user_id: String(row[idx.created_by_user_id] || '').trim(), created_by_name: String(row[idx.created_by_name] || '').trim(), created_at: formatAnyDateTime(row[idx.created_at]), updated_at: formatAnyDateTime(row[idx.updated_at]), status: String(row[idx.status] || 'ACTIVE').toUpperCase() === 'VOID' ? 'VOID' : 'ACTIVE', void_reason: String(row[idx.void_reason] || '').trim(), voided_by_user_id: String(row[idx.voided_by_user_id] || '').trim(), voided_by_name: String(row[idx.voided_by_name] || '').trim(), voided_at: formatAnyDateTime(row[idx.voided_at])
   };
 }
 function transactionFromObject(o) { var x = {}; for (var k in o) x[k] = o[k]; x.nisn = normalizeNisnLoose(x.nisn); x.created_by = x.created_by_name; return x; }

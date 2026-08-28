@@ -20,7 +20,7 @@ import { Transaction, NavTab } from '../types';
 import { formatRupiah, formatDateIndo, formatDateTimeIndo } from '../lib/utils';
 import { DashboardSkeleton, DelayedRender } from './Skeleton';
 import { useToast } from '../context/ToastContext';
-import { useDashboardQuery, useTransactionMutations } from '../hooks/useQueries';
+import { useDashboardQuery, useTransactionMutations, useStudentsQuery } from '../hooks/useQueries';
 
 interface DashboardViewProps {
   onNavigate: (tab: NavTab) => void;
@@ -38,7 +38,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenAddStudent
 }) => {
   const { data, isLoading, isFetching, refetch } = useDashboardQuery();
+  const { data: studentsData } = useStudentsQuery();
   const { voidMutation } = useTransactionMutations();
+
+  const studentsMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    if (studentsData && Array.isArray(studentsData)) {
+      for (const s of studentsData) {
+        if (s.nisn && s.nama) map.set(s.nisn, s.nama);
+        if (s.student_id && s.nama) map.set(s.student_id, s.nama);
+      }
+    }
+    return map;
+  }, [studentsData]);
+
+  const getStudentDisplayName = (trx?: Transaction | null) => {
+    if (!trx) return 'Siswa';
+    return (
+      trx.student_nama ||
+      trx.nama ||
+      (trx.nisn ? studentsMap.get(trx.nisn) : undefined) ||
+      (trx.student_id ? studentsMap.get(trx.student_id) : undefined) ||
+      'Siswa'
+    );
+  };
+
+  const getStudentNisn = (trx?: Transaction | null) => {
+    if (!trx) return '-';
+    return trx.student_nisn || trx.nisn || trx.student_id || '-';
+  };
 
   const [selectedTrxForDetail, setSelectedTrxForDetail] = useState<Transaction | null>(null);
   const [voidModalTrx, setVoidModalTrx] = useState<Transaction | null>(null);
@@ -316,7 +344,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className={`text-sm font-bold truncate ${isVoid ? 'line-through text-slate-500' : 'text-slate-900'}`}>
-                          {trx.student_nama || 'Siswa'}
+                          {getStudentDisplayName(trx)}
                         </p>
                         {isVoid && (
                           <span className="px-1.5 py-0.5 text-[10px] font-extrabold uppercase bg-rose-100 text-rose-700 rounded">
@@ -391,7 +419,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {formatRupiah(selectedTrxForDetail.amount)}
                 </h3>
                 <p className="text-xs font-semibold text-slate-700 mt-0.5">
-                  {selectedTrxForDetail.student_nama} (NISN: {selectedTrxForDetail.student_nisn || '-'})
+                  {getStudentDisplayName(selectedTrxForDetail)} (NISN: {getStudentNisn(selectedTrxForDetail)})
                 </p>
               </div>
 
@@ -463,7 +491,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <p className="text-xs text-slate-600 leading-relaxed">
                 Membatalkan transaksi <strong>{voidModalTrx.transaction_id}</strong> senilai{' '}
                 <strong>{formatRupiah(voidModalTrx.amount)}</strong> untuk siswa{' '}
-                <strong>{voidModalTrx.student_nama}</strong>. Transaksi tidak akan dihapus permanen agar histori pembukuan tetap aman, namun saldo siswa akan disesuaikan otomatis.
+                <strong>{getStudentDisplayName(voidModalTrx)}</strong>. Transaksi tidak akan dihapus permanen agar histori pembukuan tetap aman, namun saldo siswa akan disesuaikan otomatis.
               </p>
 
               <div>
