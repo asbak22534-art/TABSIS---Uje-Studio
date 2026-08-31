@@ -270,7 +270,34 @@ export class DatabaseService {
     const record = await this.getAuthRecordByUsername(username);
     if (!record || record.status !== 'ACTIVE' || !verifyPassword(password, record.password_hash)) throw new Error('Username atau password salah.');
     const role = normalizeRole(record.role);
-    const profile = await this.getAccessProfile(record.user_id, role, true);
+
+    let profile: AccessProfile;
+    if ((record as any).profile && Array.isArray((record as any).profile?.class_sections)) {
+      const rawProfile = (record as any).profile;
+      profile = {
+        user_id: String(rawProfile.user_id || record.user_id),
+        username: sanitizeText(rawProfile.username || record.username, 100),
+        user_name: sanitizeText(rawProfile.user_name || record.name, 100),
+        role: normalizeRole(rawProfile.role || role),
+        academic_years: Array.isArray(rawProfile.academic_years) ? Array.from(new Set(rawProfile.academic_years.map(String).filter(Boolean))) : [],
+        classes_by_year: rawProfile.classes_by_year && typeof rawProfile.classes_by_year === 'object' ? rawProfile.classes_by_year : {},
+        class_sections: Array.isArray(rawProfile.class_sections) ? rawProfile.class_sections.map((s: any): ClassSection => ({
+          class_section_id: String(s.class_section_id || ''),
+          academic_year_id: String(s.academic_year_id || ''),
+          academic_year: String(s.academic_year || ''),
+          class_name: String(s.class_name || ''),
+          status: String(s.status || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+          academic_year_is_active: Boolean(s.academic_year_is_active),
+          created_at: s.created_at || '',
+          updated_at: s.updated_at || ''
+        })).filter((s: ClassSection) => !!s.class_section_id && !!s.academic_year && !!s.class_name) : [],
+        assignments: Array.isArray(rawProfile.assignments) ? rawProfile.assignments : []
+      };
+      this.setCache(this.accessCache, record.user_id, profile);
+    } else {
+      profile = await this.getAccessProfile(record.user_id, role, true);
+    }
+
     const user = this.buildUser({ ...record, role }, profile);
     const signedToken = createSignedSessionToken(record.user_id, record.username, role);
     return { user, signedToken, expiresAt: Date.now() + CONFIG.SESSION_TTL_SECONDS * 1000 };
@@ -402,8 +429,39 @@ export class DatabaseService {
     };
     if (!payload.nama) throw new Error('Nama siswa wajib diisi.');
     const saved = await this.callGasApi<Student>('createStudentEnrollment', payload, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
-    this.clearUserCache(user.user_id);
-    return { ...saved, student_id: saved.nisn || n.cleanNisn };
+    
+    const newStudent: Student = {
+      ...saved,
+      student_id: saved.nisn || n.cleanNisn,
+      nisn: saved.nisn || n.cleanNisn,
+      nama: payload.nama,
+      jenis_kelamin: payload.jenis_kelamin as 'L' | 'P',
+      no_hp_wali: payload.no_hp_wali,
+      academic_year: user.active_academic_year,
+      kelas: user.active_class_id,
+      class_section_id: user.active_class_section_id,
+      status: 'ACTIVE',
+      enrollment_status: 'ACTIVE',
+      balance: 0,
+      totalDeposit: 0,
+      totalWithdrawal: 0,
+      transactionCount: 0
+    };
+
+    const scopeKey = `${user.user_id}|${user.active_class_section_id}`;
+    const cachedScope = this.scopeCache.get(scopeKey);
+    if (cachedScope && cachedScope.value) {
+      const bundle = cachedScope.value;
+      const idx = bundle.students.findIndex((s) => s.nisn === newStudent.nisn || s.student_id === newStudent.student_id);
+      if (idx >= 0) {
+        bundle.students[idx] = newStudent;
+      } else {
+        bundle.students.push(newStudent);
+        bundle.students.sort((a, b) => a.nama.localeCompare(b.nama));
+      }
+    }
+
+    return newStudent;
   }
 
   public async updateStudent(id: string, updates: Partial<Student>, user: User): Promise<Student> {
@@ -417,15 +475,41 @@ export class DatabaseService {
       no_hp_wali: updates.no_hp_wali !== undefined ? sanitizeText(updates.no_hp_wali, 30) : current.no_hp_wali
     };
     const saved = await this.callGasApi<Student>('updateStudentMaster', payload, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
-    this.clearUserCache(user.user_id);
-    return { ...current, ...saved, student_id: current.nisn, nisn: current.nisn };
+    
+    const updated: Student = {
+      ...current,
+      ...saved,
+      nama: payload.nama,
+      jenis_kelamin: payload.jenis_kelamin as 'L' | 'P',
+      no_hp_wali: payload.no_hp_wali,
+      student_id: current.nisn,
+      nisn: current.nisn
+    };
+
+    const scopeKey = `${user.user_id}|${user.active_class_section_id}`;
+    const cachedScope = this.scopeCache.get(scopeKey);
+    if (cachedScope && cachedScope.value) {
+      const bundle = cachedScope.value;
+      const idx = bundle.students.findIndex((s) => s.nisn === current.nisn || s.student_id === current.student_id);
+      if (idx >= 0) {
+        bundle.students[idx] = { ...bundle.students[idx], ...updated };
+      }
+    }
+
+    return updated;
   }
 
   public async deleteStudent(id: string, user: User): Promise<void> {
     const current = await this.getStudentById(id, user);
     if (!current) throw new Error('STUDENT_NOT_FOUND: Siswa tidak ditemukan pada kelas aktif.');
     await this.callGasApi('deactivateEnrollment', { enrollment_id: current.enrollment_id, nisn: current.nisn }, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
-    this.clearUserCache(user.user_id);
+    
+    const scopeKey = `${user.user_id}|${user.active_class_section_id}`;
+    const cachedScope = this.scopeCache.get(scopeKey);
+    if (cachedScope && cachedScope.value) {
+      const bundle = cachedScope.value;
+      bundle.students = bundle.students.filter((s) => s.nisn !== current.nisn && s.student_id !== current.student_id && s.enrollment_id !== current.enrollment_id);
+    }
   }
 
   public async getTransactions(user: User, filter?: string | { studentId?: string; limit?: number; cursor?: string }): Promise<Transaction[]> {
@@ -478,7 +562,6 @@ export class DatabaseService {
       description: sanitizeText(params.description || (type === 'SETORAN' ? 'Setoran Tabungan' : 'Penarikan Tabungan'), 200)
     };
     const result = await this.callGasApi<any>('processTransaction', data, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
-    this.clearUserCache(user.user_id);
 
     const today = getJakartaToday();
     const isToday = dateCheck.cleanDate === today;
@@ -489,8 +572,59 @@ export class DatabaseService {
 
     const newBalance = typeof result?.newBalance === 'number' ? result.newBalance : (student.balance || 0) + totalBalanceDelta;
 
+    const finalTrx: Transaction = {
+      transaction_id: String(result.transaction?.transaction_id || data.transaction_id),
+      enrollment_id: student.enrollment_id,
+      student_id: student.nisn,
+      nisn: student.nisn,
+      nama: student.nama,
+      student_nama: student.nama,
+      student_nisn: student.nisn,
+      class_section_id: user.active_class_section_id || '',
+      academic_year: user.active_academic_year || '',
+      kelas: user.active_class_id || '',
+      student_kelas: user.active_class_id || '',
+      student_academic_year: user.active_academic_year || '',
+      transaction_type: type,
+      amount: amount,
+      transaction_date: dateCheck.cleanDate,
+      description: data.description,
+      created_by_user_id: user.user_id,
+      created_by: user.name,
+      created_at: result.transaction?.created_at || new Date().toISOString(),
+      updated_at: result.transaction?.updated_at || new Date().toISOString(),
+      status: 'ACTIVE',
+      void_reason: '',
+      voided_by_user_id: '',
+      voided_by: '',
+      voided_at: ''
+    };
+
+    // Update in-memory cache directly so subsequent requests don't hit GAS
+    const scopeKey = `${user.user_id}|${user.active_class_section_id}`;
+    const cachedScope = this.scopeCache.get(scopeKey);
+    if (cachedScope && cachedScope.value) {
+      const bundle = cachedScope.value;
+      const targetStudent = bundle.students.find((s) => s.nisn === student.nisn || s.student_id === student.nisn);
+      if (targetStudent) {
+        targetStudent.balance = newBalance;
+        if (type === 'SETORAN') {
+          targetStudent.totalDeposit = (targetStudent.totalDeposit || 0) + amount;
+        } else {
+          targetStudent.totalWithdrawal = (targetStudent.totalWithdrawal || 0) + amount;
+        }
+        targetStudent.transactionCount = (targetStudent.transactionCount || 0) + 1;
+      }
+      const existingIdx = bundle.transactions.findIndex((t) => t.transaction_id === finalTrx.transaction_id);
+      if (existingIdx >= 0) {
+        bundle.transactions[existingIdx] = finalTrx;
+      } else {
+        bundle.transactions.unshift(finalTrx);
+      }
+    }
+
     return {
-      transaction: result.transaction,
+      transaction: finalTrx,
       currentBalance: newBalance,
       student: {
         nisn: student.nisn,
@@ -517,7 +651,6 @@ export class DatabaseService {
       transaction_id: String(transactionId || '').trim(),
       void_reason: sanitizeText(voidReason || 'Dibatalkan', 250)
     }, { user_id: user.user_id, role: user.role, active_class_section_id: user.active_class_section_id });
-    this.clearUserCache(user.user_id);
 
     const trx = result.transaction as Transaction;
     const today = getJakartaToday();
@@ -528,6 +661,32 @@ export class DatabaseService {
     const totalBalanceDelta = wasDeposit ? -amount : amount;
     const todayDepositDelta = wasDeposit && isToday ? -amount : 0;
     const todayWithdrawalDelta = !wasDeposit && isToday ? -amount : 0;
+
+    // Update in-memory cache directly
+    const scopeKey = `${user.user_id}|${user.active_class_section_id}`;
+    const cachedScope = this.scopeCache.get(scopeKey);
+    if (cachedScope && cachedScope.value) {
+      const bundle = cachedScope.value;
+      const existingIdx = bundle.transactions.findIndex((t) => t.transaction_id === String(transactionId).trim());
+      if (existingIdx >= 0) {
+        bundle.transactions[existingIdx].status = 'VOID';
+        bundle.transactions[existingIdx].void_reason = sanitizeText(voidReason || 'Dibatalkan', 250);
+        bundle.transactions[existingIdx].voided_by = user.name;
+        bundle.transactions[existingIdx].voided_by_user_id = user.user_id;
+        bundle.transactions[existingIdx].voided_at = new Date().toISOString();
+      }
+      if (trx?.nisn) {
+        const targetStudent = bundle.students.find((s) => s.nisn === trx.nisn || s.student_id === trx.nisn);
+        if (targetStudent) {
+          targetStudent.balance = Number(result?.newBalance ?? targetStudent.balance + totalBalanceDelta);
+          if (wasDeposit) {
+            targetStudent.totalDeposit = Math.max(0, (targetStudent.totalDeposit || 0) - amount);
+          } else {
+            targetStudent.totalWithdrawal = Math.max(0, (targetStudent.totalWithdrawal || 0) - amount);
+          }
+        }
+      }
+    }
 
     return {
       transaction: trx,

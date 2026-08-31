@@ -134,9 +134,54 @@ export function useTransactionMutations() {
   const { activeAcademicYear, activeClassId } = useAuth();
 
   const handleMutationSuccess = (result: TransactionResult) => {
-    // Invalidate financial queries for the current active scope
-    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(activeAcademicYear, activeClassId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.students(activeAcademicYear, activeClassId) });
+    // 1. Immediately update student in React Query cache
+    if (result.student?.nisn) {
+      const studentNisn = result.student.nisn;
+      queryClient.setQueryData<Student[]>(
+        queryKeys.students(activeAcademicYear, activeClassId),
+        (old = []) => old.map((s) => {
+          if (s.nisn === studentNisn || s.student_id === studentNisn) {
+            return {
+              ...s,
+              balance: result.student?.balance ?? s.balance,
+              totalDeposit: result.student?.totalDeposit ?? s.totalDeposit,
+              totalWithdrawal: result.student?.totalWithdrawal ?? s.totalWithdrawal,
+              transactionCount: result.student?.transactionCount ?? s.transactionCount
+            };
+          }
+          return s;
+        })
+      );
+    }
+
+    // 2. Immediately update dashboard summary in React Query cache
+    if (result.dashboardDelta) {
+      queryClient.setQueryData<DashboardSummary>(
+        queryKeys.dashboard(activeAcademicYear, activeClassId),
+        (old) => {
+          if (!old) return old;
+          const next = { ...old };
+          if (result.dashboardDelta?.totalBalanceDelta) {
+            next.totalClassBalance = (next.totalClassBalance || 0) + result.dashboardDelta.totalBalanceDelta;
+          }
+          if (result.dashboardDelta?.todayDepositDelta) {
+            next.todayDeposit = (next.todayDeposit || 0) + result.dashboardDelta.todayDepositDelta;
+          }
+          if (result.dashboardDelta?.todayWithdrawalDelta) {
+            next.todayWithdrawal = (next.todayWithdrawal || 0) + result.dashboardDelta.todayWithdrawalDelta;
+          }
+          if (result.transaction) {
+            const list = [result.transaction, ...(next.recentTransactions || [])];
+            next.recentTransactions = list.slice(0, 10);
+          }
+          return next;
+        }
+      );
+    }
+
+    // Soft invalidation without removing active data
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(activeAcademicYear, activeClassId), refetchType: 'none' });
+    queryClient.invalidateQueries({ queryKey: queryKeys.students(activeAcademicYear, activeClassId), refetchType: 'none' });
     queryClient.invalidateQueries({ queryKey: ['transactions', activeAcademicYear || '', activeClassId || ''] });
     queryClient.invalidateQueries({ queryKey: ['student_report', activeAcademicYear || '', activeClassId || ''] });
     queryClient.invalidateQueries({ queryKey: queryKeys.classReport(activeAcademicYear, activeClassId) });

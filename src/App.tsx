@@ -96,7 +96,7 @@ const MainAppContent: React.FC = () => {
           />
 
           {/* Main Container */}
-          <main id="main-content" className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 md:pb-10 min-h-[calc(100vh-140px)]">
+          <main id="main-content" className="flex-1 max-w-5xl w-full mx-auto px-3 xs:px-4 sm:px-6 pt-4 sm:pt-5 pb-24 md:pb-10 min-h-[calc(100vh-140px)] overflow-x-hidden">
             <AnimatePresence mode="wait">
               {selectedStudentId ? (
                 <motion.div
@@ -105,6 +105,7 @@ const MainAppContent: React.FC = () => {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.12 }}
+                  className="w-full max-w-full overflow-x-hidden"
                 >
                   <StudentDetailView
                     studentId={selectedStudentId}
@@ -130,6 +131,7 @@ const MainAppContent: React.FC = () => {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.12 }}
+                  className="w-full max-w-full overflow-x-hidden"
                 >
                   {currentTab === 'dashboard' && (
                     <DashboardView

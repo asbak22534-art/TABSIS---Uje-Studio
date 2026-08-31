@@ -185,49 +185,58 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ onSelectStudent }) => 
       </div>
 
       {/* Class Financial Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-          <div className="flex items-center justify-between text-slate-600 mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Total Siswa</span>
-            <Users className="w-4 h-4 text-teal-600" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+        <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-xs min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between text-slate-600 mb-1 gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider truncate">Total Siswa</span>
+            <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 shrink-0" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-slate-900">
+          <p className="text-base xs:text-lg sm:text-2xl font-black text-slate-900 truncate">
             {classReport.totalStudents}
           </p>
-          <span className="text-[10px] text-slate-700">Terdaftar di kelas</span>
+          <span className="text-[10px] text-slate-500 truncate block">Terdaftar di kelas</span>
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-          <div className="flex items-center justify-between text-emerald-600 mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Total Saldo</span>
-            <Wallet className="w-4 h-4 text-emerald-600" />
+        <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-xs min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between text-emerald-600 mb-1 gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider truncate">Total Saldo</span>
+            <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-700">
+          <p
+            className="text-sm xs:text-base sm:text-xl lg:text-2xl font-black text-emerald-700 truncate tracking-tight leading-snug"
+            title={formatRupiah(classReport.totalBalance)}
+          >
             {formatRupiah(classReport.totalBalance)}
           </p>
-          <span className="text-[10px] text-slate-700">Uang tersimpan</span>
+          <span className="text-[10px] text-slate-500 truncate block">Uang tersimpan</span>
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-          <div className="flex items-center justify-between text-emerald-600 mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Total Setoran</span>
-            <ArrowDownRight className="w-4 h-4 text-emerald-600" />
+        <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-xs min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between text-emerald-600 mb-1 gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider truncate">Total Setoran</span>
+            <ArrowDownRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
           </div>
-          <p className="text-lg sm:text-xl font-black text-emerald-700">
+          <p
+            className="text-xs xs:text-sm sm:text-base md:text-xl font-black text-emerald-700 truncate tracking-tight leading-snug"
+            title={`+${formatRupiah(classReport.totalDeposit)}`}
+          >
             +{formatRupiah(classReport.totalDeposit)}
           </p>
-          <span className="text-[10px] text-slate-700">Akumulasi masuk</span>
+          <span className="text-[10px] text-slate-500 truncate block">Akumulasi masuk</span>
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs">
-          <div className="flex items-center justify-between text-amber-600 mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Total Penarikan</span>
-            <ArrowUpRight className="w-4 h-4 text-amber-600" />
+        <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-xs min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between text-amber-600 mb-1 gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider truncate">Total Penarikan</span>
+            <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 shrink-0" />
           </div>
-          <p className="text-lg sm:text-xl font-black text-amber-700">
+          <p
+            className="text-xs xs:text-sm sm:text-base md:text-xl font-black text-amber-700 truncate tracking-tight leading-snug"
+            title={`-${formatRupiah(classReport.totalWithdrawal)}`}
+          >
             -{formatRupiah(classReport.totalWithdrawal)}
           </p>
-          <span className="text-[10px] text-slate-700">Akumulasi keluar</span>
+          <span className="text-[10px] text-slate-500 truncate block">Akumulasi keluar</span>
         </div>
       </div>
 

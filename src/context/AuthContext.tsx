@@ -94,12 +94,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, password: string) => {
     const authData = await api.login(username, password);
-    try {
-      const bootstrap = await api.getBootstrap();
-      applyUser(bootstrap.user);
-    } catch {
-      applyUser(authData.user);
-    }
+    applyUser(authData.user);
+    // Prefetch bootstrap in background
+    api.getBootstrap().then((bootstrap) => {
+      if (bootstrap?.user) applyUser(bootstrap.user);
+    }).catch(() => {});
   };
 
   const setActiveAcademicYear = async (year: string) => {

@@ -470,17 +470,17 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
             {/* Current Balance Display Banner (Crucial for Penarikan) */}
             {selectedStudent && (
               <div
-                className={`p-3 rounded-2xl flex items-center justify-between text-xs border ${
+                className={`p-3 rounded-2xl flex items-center justify-between gap-2 text-xs border ${
                   type === 'PENARIKAN'
                     ? 'bg-amber-50/80 border-amber-200 text-amber-950'
                     : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <Wallet className="w-4 h-4 text-emerald-600" />
-                  <span className="font-semibold">Saldo Saat Ini ({selectedStudent.nama}):</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Wallet className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="font-semibold truncate">Saldo Saat Ini ({selectedStudent.nama}):</span>
                 </div>
-                <span className="font-black text-sm text-slate-900">
+                <span className="font-black text-sm text-slate-900 shrink-0">
                   {formatRupiah(selectedStudent.balance || 0)}
                 </span>
               </div>

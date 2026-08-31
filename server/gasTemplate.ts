@@ -170,6 +170,9 @@ function getAuthUser(data) {
   }
   if (!found) throw apiError('INVALID_CREDENTIALS', 'Pengguna tidak ditemukan atau kredensial salah.');
   if (!found.user_id) throw apiError('USER_ID_REQUIRED', 'user_id pada USERS wajib diisi. Jalankan migrasi atau isi manual.');
+  try {
+    found.profile = getAccessProfile({ user_id: found.user_id, username: found.username, user_name: found.name, role: found.role });
+  } catch (e) {}
   return found;
 }
 
@@ -563,14 +566,22 @@ function processTransaction(data, context) {
     if (!student || student.status !== 'ACTIVE') throw apiError('STUDENT_NOT_ACTIVE', 'Siswa tidak aktif.');
 
     var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS), h = ensureHeaders(sheet, TRANSACTION_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues();
+    var current = 0;
     for (var r = 1; r < rows.length; r++) {
-      if (String(rows[r][idx.transaction_id] || '').trim() !== id) continue;
-      var same = String(rows[r][idx.enrollment_id] || '').trim() === enrollment.enrollment_id && normalizeNisnLoose(rows[r][idx.nisn]) === nisn && String(rows[r][idx.class_section_id] || '').trim() === section.class_section_id && String(rows[r][idx.transaction_type] || '').toUpperCase() === type && parseMoney(rows[r][idx.amount]) === amount && normalizeBusinessDate(rows[r][idx.transaction_date]) === trxDate;
-      if (!same || String(rows[r][idx.status] || '').toUpperCase() === 'VOID') throw apiError('IDEMPOTENCY_CONFLICT', 'transaction_id sudah dipakai untuk payload berbeda/VOID.');
-      return { transaction: transactionFromRow(rows[r], idx), idempotent: true, newBalance: calculateStudentMetrics(nisn, ss).balance };
+      var rowNisn = normalizeNisnLoose(rows[r][idx.nisn]);
+      var isVoid = String(rows[r][idx.status] || 'ACTIVE').toUpperCase() === 'VOID';
+      if (rowNisn === nisn && !isVoid) {
+        var a = parseMoney(rows[r][idx.amount]), t = String(rows[r][idx.transaction_type] || '').toUpperCase();
+        if (t === 'SETORAN') current += a;
+        else if (t === 'PENARIKAN') current -= a;
+      }
+      if (String(rows[r][idx.transaction_id] || '').trim() === id) {
+        var same = String(rows[r][idx.enrollment_id] || '').trim() === enrollment.enrollment_id && rowNisn === nisn && String(rows[r][idx.class_section_id] || '').trim() === section.class_section_id && String(rows[r][idx.transaction_type] || '').toUpperCase() === type && parseMoney(rows[r][idx.amount]) === amount && normalizeBusinessDate(rows[r][idx.transaction_date]) === trxDate;
+        if (!same || isVoid) throw apiError('IDEMPOTENCY_CONFLICT', 'transaction_id sudah dipakai untuk payload berbeda/VOID.');
+        return { transaction: transactionFromRow(rows[r], idx), idempotent: true, newBalance: current };
+      }
     }
 
-    var current = calculateStudentMetrics(nisn, ss).balance;
     if (type === 'PENARIKAN' && current < amount) throw apiError('INSUFFICIENT_BALANCE', 'Saldo tidak mencukupi.');
     var now = formatDateTimeJakarta(new Date()), description = sanitizeText(data.description || (type === 'SETORAN' ? 'Setoran Tabungan' : 'Penarikan Tabungan'), 200);
     var obj = {

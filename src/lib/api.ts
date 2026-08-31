@@ -295,7 +295,7 @@ class ApiService {
 
   public async deposit(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
     const d = await this.request<TransactionResult>('/api/transactions/deposit', { method: 'POST', body: JSON.stringify(params) });
-    this.clearCache();
+    this.updateCacheAfterTransaction(d);
     return d;
   }
 
@@ -305,7 +305,7 @@ class ApiService {
 
   public async withdraw(params: { student_id: string; amount: number; transaction_date?: string; description?: string }): Promise<TransactionResult> {
     const d = await this.request<TransactionResult>('/api/transactions/withdraw', { method: 'POST', body: JSON.stringify(params) });
-    this.clearCache();
+    this.updateCacheAfterTransaction(d);
     return d;
   }
 
@@ -315,8 +315,31 @@ class ApiService {
 
   public async voidTransaction(transaction_id: string, void_reason?: string): Promise<TransactionResult> {
     const d = await this.request<TransactionResult>('/api/transactions/void', { method: 'POST', body: JSON.stringify({ transaction_id, void_reason }) });
-    this.clearCache();
+    this.updateCacheAfterTransaction(d);
     return d;
+  }
+
+  private updateCacheAfterTransaction(result: TransactionResult) {
+    if (result.student) {
+      const students = this.getCached<Student[]>('students');
+      if (students) {
+        const next = students.map((s) => (s.nisn === result.student?.nisn || s.student_id === result.student?.nisn) ? { ...s, ...result.student } : s);
+        this.setCached('students', next);
+      }
+    }
+    if (result.dashboardDelta) {
+      const summary = this.getCached<DashboardSummary>('summary');
+      if (summary) {
+        const next = { ...summary };
+        if (result.dashboardDelta.totalBalanceDelta) next.totalClassBalance = (next.totalClassBalance || 0) + result.dashboardDelta.totalBalanceDelta;
+        if (result.dashboardDelta.todayDepositDelta) next.todayDeposit = (next.todayDeposit || 0) + result.dashboardDelta.todayDepositDelta;
+        if (result.dashboardDelta.todayWithdrawalDelta) next.todayWithdrawal = (next.todayWithdrawal || 0) + result.dashboardDelta.todayWithdrawalDelta;
+        if (result.transaction) {
+          next.recentTransactions = [result.transaction, ...(next.recentTransactions || [])].slice(0, 10);
+        }
+        this.setCached('summary', next);
+      }
+    }
   }
 
   public async getStudentReport(studentId: string, startDate?: string, endDate?: string): Promise<StudentReport> {

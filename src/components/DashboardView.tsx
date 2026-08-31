@@ -117,19 +117,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }
 
   return (
-    <div className="space-y-5 pb-6">
+    <div className="space-y-4 sm:space-y-5 pb-6 max-w-full overflow-x-hidden">
       {/* Teacher Welcome Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex items-start justify-between gap-2.5 sm:gap-3">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 uppercase tracking-wider mb-0.5">
-            <Sparkles className="w-3.5 h-3.5" />
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
             <span>Wali Kelas</span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+          <h1 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight truncate">
             Selamat datang, {data.teacherName}
           </h1>
-          <p className="text-xs text-slate-700 mt-0.5 font-medium">
-            Pengelolaan Tabungan • <span className="font-semibold text-slate-700">{data.className}</span> • TA {data.academicYear}
+          <p className="text-xs text-slate-700 mt-0.5 font-medium truncate">
+            Pengelolaan Tabungan • <span className="font-semibold text-slate-900">{data.className}</span> • TA {data.academicYear}
           </p>
         </div>
 
@@ -137,7 +137,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           id="refresh-dashboard-btn"
           onClick={() => refetch()}
           disabled={isFetching}
-          className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all active:scale-95 disabled:opacity-50"
+          className="p-2 sm:p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all active:scale-95 disabled:opacity-50 shrink-0"
           title="Segarkan data"
         >
           <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin text-emerald-600' : ''}`} />
@@ -145,39 +145,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Main Hero Card: Total Saldo Kelas */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-700 via-teal-700 to-emerald-900 text-white p-5 sm:p-6 shadow-xl shadow-emerald-900/10">
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-700 via-teal-700 to-emerald-900 text-white p-4.5 sm:p-6 shadow-xl shadow-emerald-900/10">
         {/* Abstract decorative shapes */}
         <div className="absolute -right-6 -bottom-6 w-36 h-36 bg-white/10 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute right-12 top-0 w-24 h-24 bg-teal-400/20 rounded-full blur-xl pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col justify-between min-h-[140px]">
+        <div className="relative z-10 flex flex-col justify-between min-h-[130px] sm:min-h-[140px] max-w-full">
           <div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs sm:text-sm font-semibold tracking-wide text-emerald-100 flex items-center gap-1.5">
-                <Wallet className="w-4 h-4" />
-                Total Saldo Kelas
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-semibold tracking-wide text-emerald-100 flex items-center gap-1.5 truncate">
+                <Wallet className="w-4 h-4 shrink-0" />
+                <span>Total Saldo Kelas</span>
               </span>
-              <span className="px-2.5 py-1 rounded-full bg-white/20 text-white text-xs font-bold backdrop-blur-md">
+              <span className="px-2.5 py-1 rounded-full bg-white/20 text-white text-xs font-bold backdrop-blur-md shrink-0">
                 {data.className}
               </span>
             </div>
 
-            <div className="mt-2.5">
-              <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-white drop-shadow-xs">
+            <div className="mt-2 sm:mt-2.5 min-w-0">
+              <h2 className="text-xl xs:text-2xl sm:text-4xl font-black tracking-tight text-white drop-shadow-xs truncate max-w-full">
                 {formatRupiah(data.totalClassBalance)}
               </h2>
             </div>
           </div>
 
-          <div className="pt-4 mt-4 border-t border-white/15 flex items-center justify-between text-xs text-emerald-100 font-medium">
-            <div className="flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-emerald-200" />
+          <div className="pt-3 sm:pt-4 mt-3 sm:mt-4 border-t border-white/15 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-100 font-medium">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Users className="w-4 h-4 text-emerald-200 shrink-0" />
               <span>
                 <strong className="text-white font-bold">{data.totalStudents}</strong> Siswa
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse shrink-0" />
               <span>
                 <strong className="text-white font-bold">{data.activeSavers}</strong> Aktif Menabung
               </span>
@@ -188,36 +188,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Today Activity Cards: Setoran & Penarikan Hari Ini */}
       <div>
-        <div className="flex items-center justify-between mb-2.5">
-          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+        <div className="flex items-center justify-between gap-2 mb-2 sm:mb-2.5">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider truncate">
             Aktivitas Hari Ini
           </h3>
-          <span className="text-xs font-medium text-slate-700">
+          <span className="text-[11px] sm:text-xs font-medium text-slate-700 shrink-0">
             {formatDateIndo(new Date().toISOString())}
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
-            <div className="flex items-center justify-between text-emerald-700 mb-1.5">
-              <span className="text-xs font-bold">Setoran</span>
-              <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center">
-                <ArrowDownRight className="w-4 h-4 text-emerald-600" />
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+          <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/80 shadow-xs min-w-0">
+            <div className="flex items-center justify-between text-emerald-700 mb-1 sm:mb-1.5">
+              <span className="text-xs font-bold truncate">Setoran</span>
+              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                <ArrowDownRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />
               </div>
             </div>
-            <p className="text-base sm:text-xl font-black text-emerald-700">
+            <p className="text-sm xs:text-base sm:text-xl font-black text-emerald-700 truncate">
               +{formatRupiah(data.todayDeposit)}
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
-            <div className="flex items-center justify-between text-amber-700 mb-1.5">
-              <span className="text-xs font-bold">Penarikan</span>
-              <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center">
-                <ArrowUpRight className="w-4 h-4 text-amber-600" />
+          <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/80 shadow-xs min-w-0">
+            <div className="flex items-center justify-between text-amber-700 mb-1 sm:mb-1.5">
+              <span className="text-xs font-bold truncate">Penarikan</span>
+              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+                <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600" />
               </div>
             </div>
-            <p className="text-base sm:text-xl font-black text-amber-700">
+            <p className="text-sm xs:text-base sm:text-xl font-black text-amber-700 truncate">
               -{formatRupiah(data.todayWithdrawal)}
             </p>
           </div>
@@ -226,63 +226,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Quick Action Buttons */}
       <div>
-        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 sm:mb-2.5">
           Aksi Cepat
         </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
           <button
             id="quick-action-setoran"
             onClick={() => onOpenDeposit()}
-            className="flex items-center gap-3 p-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white transition-all shadow-xs group"
+            className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white transition-all shadow-xs group min-w-0 cursor-pointer"
           >
-            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-              <PlusCircle className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
-            <div className="text-left">
-              <p className="text-xs font-bold leading-tight">+ Setoran</p>
-              <p className="text-[11px] text-emerald-100/90 font-medium">Catat tabungan</p>
+            <div className="text-left min-w-0 flex-1">
+              <p className="text-xs font-bold leading-tight truncate">+ Setoran</p>
+              <p className="text-[10px] sm:text-[11px] text-emerald-100/90 font-medium truncate">Catat tabungan</p>
             </div>
           </button>
 
           <button
             id="quick-action-penarikan"
             onClick={() => onOpenWithdraw()}
-            className="flex items-center gap-3 p-3.5 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white transition-all shadow-xs group"
+            className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white transition-all shadow-xs group min-w-0 cursor-pointer"
           >
-            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-              <MinusCircle className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <MinusCircle className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
-            <div className="text-left">
-              <p className="text-xs font-bold leading-tight">- Penarikan</p>
-              <p className="text-[11px] text-amber-100/90 font-medium">Tarik saldo</p>
+            <div className="text-left min-w-0 flex-1">
+              <p className="text-xs font-bold leading-tight truncate">- Penarikan</p>
+              <p className="text-[10px] sm:text-[11px] text-amber-100/90 font-medium truncate">Tarik saldo</p>
             </div>
           </button>
 
           <button
             id="quick-action-tambah-siswa"
             onClick={onOpenAddStudent}
-            className="flex items-center gap-3 p-3.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200/80 active:scale-[0.98] text-slate-800 transition-all shadow-xs group"
+            className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200/80 active:scale-[0.98] text-slate-800 transition-all shadow-xs group min-w-0 cursor-pointer"
           >
-            <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-              <UserPlus className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <UserPlus className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div className="text-left">
-              <p className="text-xs font-bold text-slate-900 leading-tight">+ Tambah Siswa</p>
-              <p className="text-[11px] text-slate-700 font-medium">Daftar siswa baru</p>
+            <div className="text-left min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-900 leading-tight truncate">+ Siswa</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-700 font-medium truncate">Daftar siswa baru</p>
             </div>
           </button>
 
           <button
             id="quick-action-lihat-siswa"
             onClick={() => onNavigate('students')}
-            className="flex items-center gap-3 p-3.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200/80 active:scale-[0.98] text-slate-800 transition-all shadow-xs group"
+            className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200/80 active:scale-[0.98] text-slate-800 transition-all shadow-xs group min-w-0 cursor-pointer"
           >
-            <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-              <Users className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <Users className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div className="text-left">
-              <p className="text-xs font-bold text-slate-900 leading-tight">Lihat Siswa</p>
-              <p className="text-[11px] text-slate-700 font-medium">Semua ({data.totalStudents})</p>
+            <div className="text-left min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-900 leading-tight truncate">Data Siswa</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-700 font-medium truncate">Semua ({data.totalStudents})</p>
             </div>
           </button>
         </div>
