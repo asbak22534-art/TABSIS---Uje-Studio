@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ArrowDownRight, 
   ArrowUpRight, 
@@ -14,7 +14,9 @@ import {
   RefreshCw,
   Plus,
   RotateCcw,
-  X
+  X,
+  FastForward,
+  Check
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Student, Transaction, TransactionMutationResult } from '../types';
@@ -49,6 +51,8 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     getJakartaToday()
   );
 
+  const amountInputRef = useRef<HTMLInputElement>(null);
+
   // Submission state (Pessimistic transaction model)
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -69,24 +73,54 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     }
   }, [initialStudentId, initialType]);
 
-  const selectedStudent = students.find((s) => s.student_id === selectedStudentId);
+  const activeStudents = students.filter((s) => s.enrollment_status !== 'INACTIVE' && s.status !== 'INACTIVE');
+  const selectedStudent = activeStudents.find((s) => s.student_id === selectedStudentId) || students.find((s) => s.student_id === selectedStudentId);
+
+  // Quick Amount Presets (Langsung ganti nominal)
+  const directPresets = [2000, 5000, 10000, 20000, 50000, 100000];
 
   // Quick Amount Chips (Additive / Penambah)
-  const quickAmounts = [5000, 10000, 20000, 50000, 100000, 200000, 500000];
+  const quickAmounts = [1000, 2000, 5000, 10000, 20000, 50000, 100000];
+
+  const handleSelectDirectAmount = (val: number) => {
+    setAmount(val);
+    setErrorMessage('');
+    if (amountInputRef.current) {
+      amountInputRef.current.focus();
+    }
+  };
 
   const handleAddQuickAmount = (val: number) => {
     const current = Number(amount) || 0;
     setAmount(current + val);
     setErrorMessage('');
+    if (amountInputRef.current) {
+      amountInputRef.current.focus();
+    }
   };
 
   const handleClearAmount = () => {
     setAmount('');
     setErrorMessage('');
+    if (amountInputRef.current) {
+      amountInputRef.current.focus();
+    }
   };
 
-  const handleProcessTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSelectStudent = (studentId: string) => {
+    setSelectedStudentId(studentId);
+    setIsDropdownOpen(false);
+    setStudentSearch('');
+    setErrorMessage('');
+    // Auto focus amount input for instant typing
+    setTimeout(() => {
+      if (amountInputRef.current) {
+        amountInputRef.current.focus();
+      }
+    }, 50);
+  };
+
+  const executeTransaction = async (goToNextAfter = false) => {
     if (!selectedStudent) {
       setErrorMessage('Pilih siswa terlebih dahulu.');
       return;
@@ -95,6 +129,7 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     const numAmount = Number(amount);
     if (!numAmount || numAmount <= 0) {
       setErrorMessage('Masukkan nominal transaksi yang valid.');
+      if (amountInputRef.current) amountInputRef.current.focus();
       return;
     }
 
@@ -134,24 +169,39 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
       // Trigger celebration confetti
       try {
         confetti({
-          particleCount: 80,
-          spread: 70,
+          particleCount: 60,
+          spread: 60,
           origin: { y: 0.6 }
         });
       } catch {}
 
       const finalBal = result.currentBalance;
 
-      setSuccessReceipt({
-        transaction: result.transaction,
-        newBalance: finalBal,
-        student: { ...selectedStudent, balance: finalBal }
-      });
-
       toastSuccess(
         `${type === 'SETORAN' ? 'Setoran' : 'Penarikan'} Berhasil!`,
-        `Transaksi senilai ${formatRupiah(numAmount)} untuk ${selectedStudent.nama} berhasil dicatat di buku kas.`
+        `${formatRupiah(numAmount)} untuk ${selectedStudent.nama} berhasil dicatat (Saldo: ${formatRupiah(finalBal)}).`
       );
+
+      if (goToNextAfter) {
+        // Find next student in list
+        const currentIndex = activeStudents.findIndex((s) => s.student_id === selectedStudent.student_id);
+        const nextStudent = activeStudents[(currentIndex + 1) % activeStudents.length];
+        if (nextStudent) {
+          setSelectedStudentId(nextStudent.student_id);
+          setAmount('');
+          setDescription('');
+          setErrorMessage('');
+          setTimeout(() => {
+            if (amountInputRef.current) amountInputRef.current.focus();
+          }, 100);
+        }
+      } else {
+        setSuccessReceipt({
+          transaction: result.transaction,
+          newBalance: finalBal,
+          student: { ...selectedStudent, balance: finalBal }
+        });
+      }
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memproses transaksi.');
       toastError('Transaksi Gagal', err.message);
@@ -160,11 +210,19 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     }
   };
 
+  const handleProcessTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeTransaction(false);
+  };
+
   const handleResetForNextTransaction = () => {
     setSuccessReceipt(null);
     setAmount('');
     setDescription('');
     setErrorMessage('');
+    setTimeout(() => {
+      if (amountInputRef.current) amountInputRef.current.focus();
+    }, 100);
   };
 
   const handleShareWhatsApp = () => {
@@ -192,11 +250,20 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
     window.print();
   };
 
-  const filteredStudentList = students.filter((s) => {
+  const filteredStudentList = activeStudents.filter((s) => {
     if (!studentSearch.trim()) return true;
     const q = studentSearch.toLowerCase().trim();
     return s.nama.toLowerCase().includes(q) || (s.nisn && s.nisn.toLowerCase().includes(q));
   });
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredStudentList.length > 0) {
+        handleSelectStudent(filteredStudentList[0].student_id);
+      }
+    }
+  };
 
   return (
     <div className="max-w-xl mx-auto pb-10">
@@ -424,7 +491,8 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                             type="text"
                             value={studentSearch}
                             onChange={(e) => setStudentSearch(e.target.value)}
-                            placeholder="Ketik nama atau NISN..."
+                            onKeyDown={handleSearchKeyDown}
+                            placeholder="Ketik nama atau NISN (Tekan Enter)..."
                             className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-emerald-600 outline-none"
                             autoFocus
                           />
@@ -438,12 +506,7 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                           filteredStudentList.map((st) => (
                             <div
                               key={st.student_id}
-                              onClick={() => {
-                                setSelectedStudentId(st.student_id);
-                                setIsDropdownOpen(false);
-                                setStudentSearch('');
-                                setErrorMessage('');
-                              }}
+                              onClick={() => handleSelectStudent(st.student_id)}
                               className={`p-2.5 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
                                 selectedStudentId === st.student_id
                                   ? 'bg-emerald-50 text-emerald-900 font-bold border border-emerald-200/60'
@@ -488,15 +551,28 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
 
             {/* Step 2: Input Amount */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                2. Nominal Transaksi (Rp) *
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                  2. Nominal Transaksi (Rp) *
+                </label>
+                {amount !== '' && Number(amount) > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAmount}
+                    className="text-[10px] font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset (0)</span>
+                  </button>
+                )}
+              </div>
 
               <div className="relative flex items-center">
                 <span className="absolute inset-y-0 left-0 pl-4 flex items-center font-black text-slate-400 text-base select-none pointer-events-none">
                   Rp
                 </span>
                 <input
+                  ref={amountInputRef}
                   id="transaction-amount-input"
                   type="text"
                   inputMode="numeric"
@@ -510,6 +586,12 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                       setAmount(Number(rawDigits));
                     }
                     setErrorMessage('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      executeTransaction(false);
+                    }
                   }}
                   placeholder="0"
                   className="w-full pl-12 pr-12 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 text-xl font-black text-slate-900 focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 outline-none transition-all placeholder:text-slate-300"
@@ -534,39 +616,50 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
                 </div>
               )}
 
-              {/* Quick Amount Chips - Additive / Cumulative */}
-              <div className="mt-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">
-                    Pilihan Nominal Cepat (+ Penambah):
+              {/* Quick Nominal Presets & Additive Buttons */}
+              <div className="mt-3 space-y-2">
+                {/* 1-Click Exact Presets */}
+                <div>
+                  <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                    Preset Langsung (1x Klik):
                   </span>
-                  {amount !== '' && Number(amount) > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleClearAmount}
-                      className="text-[10px] font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 transition-colors cursor-pointer"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset (0)</span>
-                    </button>
-                  )}
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    {directPresets.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handleSelectDirectAmount(preset)}
+                        className={`py-2 px-1.5 rounded-xl text-xs font-bold border transition-all duration-100 active:scale-95 cursor-pointer ${
+                          Number(amount) === preset
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs ring-2 ring-emerald-600/30'
+                            : 'bg-white hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-800 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {formatRupiah(preset).replace('Rp ', '')}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
-                  {quickAmounts.map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      onClick={() => handleAddQuickAmount(q)}
-                      className="py-2.5 px-1.5 rounded-xl text-xs font-black border bg-white hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-800 text-slate-700 border-slate-200/90 shadow-2xs transition-all duration-100 active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
-                    >
-                      <span className="text-emerald-600 font-extrabold text-[11px]">+</span>
-                      <span>{q >= 1000 ? `${q / 1000}K` : q}</span>
-                    </button>
-                  ))}
+
+                {/* Cumulative (+) Additive buttons */}
+                <div>
+                  <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                    Tambah Nominal (+):
+                  </span>
+                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                    {quickAmounts.map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => handleAddQuickAmount(q)}
+                        className="py-1.5 px-1 rounded-xl text-[11px] font-black border bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-800 text-slate-700 border-slate-200/90 shadow-2xs transition-all duration-100 active:scale-95 flex items-center justify-center gap-0.5 cursor-pointer"
+                      >
+                        <span className="text-emerald-600 font-extrabold text-[10px]">+</span>
+                        <span>{q >= 1000 ? `${q / 1000}K` : q}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="mt-1.5 text-[10px] text-slate-700 font-medium">
-                  💡 <em>Klik tombol untuk menambah nominal (contoh: klik +10K dua kali maka otomatis terisi 20.000)</em>
-                </p>
               </div>
             </div>
 
@@ -598,32 +691,46 @@ export const TransactionView: React.FC<TransactionViewProps> = ({
               </div>
             </div>
 
-            {/* Pessimistic Confirmation Submit Button */}
-            <button
-              id="submit-transaction-btn"
-              type="submit"
-              disabled={isProcessing || !selectedStudent || !amount || Number(amount) <= 0}
-              className={`w-full mt-3 py-4 px-5 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all duration-150 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed ${
-                type === 'SETORAN'
-                  ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/25'
-                  : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/25'
-              }`}
-            >
-              {isProcessing ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Memproses Transaksi...</span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    Simpan {type === 'SETORAN' ? 'Setoran' : 'Penarikan'} (
-                    {formatRupiah(Number(amount) || 0)})
-                  </span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
+            {/* Dual Action Buttons for Rapid Class Recording */}
+            <div className="space-y-2 pt-2">
+              <button
+                id="submit-transaction-btn"
+                type="submit"
+                disabled={isProcessing || !selectedStudent || !amount || Number(amount) <= 0}
+                className={`w-full py-3.5 sm:py-4 px-5 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all duration-150 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed ${
+                  type === 'SETORAN'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/25'
+                    : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/25'
+                }`}
+              >
+                {isProcessing ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Menyimpan ke Buku Kas...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      Simpan {type === 'SETORAN' ? 'Setoran' : 'Penarikan'} (
+                      {formatRupiah(Number(amount) || 0)})
+                    </span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              {type === 'SETORAN' && (
+                <button
+                  type="button"
+                  onClick={() => executeTransaction(true)}
+                  disabled={isProcessing || !selectedStudent || !amount || Number(amount) <= 0}
+                  className="w-full py-2.5 px-4 rounded-xl border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100/80 text-emerald-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <FastForward className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Simpan & Lanjut Siswa Berikutnya (Mode Cepat Kelas)</span>
+                </button>
               )}
-            </button>
+            </div>
           </form>
         </div>
       )}

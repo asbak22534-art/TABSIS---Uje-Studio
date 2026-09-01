@@ -98,10 +98,13 @@ function handleRequest(action, data, context) {
 }
 
 function assertDatabaseReady() {
+  var cache = CacheService.getScriptCache();
+  if (cache.get('db_ready_v5') === '1') return;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var missing = [];
   for (var key in SHEET_NAMES) if (!ss.getSheetByName(SHEET_NAMES[key])) missing.push(SHEET_NAMES[key]);
   if (missing.length) throw apiError('DATABASE_NOT_READY', 'Sheet belum siap: ' + missing.join(', ') + '. Jalankan setupDatabase() satu kali dari menu Tabungan Siswa.');
+  cache.put('db_ready_v5', '1', 21600);
 }
 
 function setupDatabase() {
@@ -177,18 +180,25 @@ function getAuthUser(data) {
 }
 
 function getUserById(userId) {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('user_obj_' + userId);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) {}
+  }
   var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.USERS);
   if (!sheet) return null;
   var h = ensureHeaders(sheet, USER_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][idx.user_id] || '').trim() !== userId) continue;
-    return {
+    var obj = {
       user_id: userId,
       username: String(rows[i][idx.username] || '').trim(),
       name: String(rows[i][idx.name] || '').trim(),
       role: 'GURU',
       status: String(rows[i][idx.status] || 'ACTIVE').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE'
     };
+    cache.put('user_obj_' + userId, JSON.stringify(obj), 1800);
+    return obj;
   }
   return null;
 }
@@ -222,6 +232,7 @@ function updateUserPasswordHash(data, context) {
       break;
     }
     if (!found) throw apiError('USER_NOT_FOUND', 'User tidak ditemukan di sheet USERS.');
+    CacheService.getScriptCache().remove('user_obj_' + targetUserId);
     SpreadsheetApp.flush();
     return { success: true, message: 'Password hash berhasil diperbarui.' };
   } finally {
@@ -556,14 +567,27 @@ function deactivateEnrollment(data, context) {
 function processTransaction(data, context) {
   var lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
-    var section = assertSectionAccess(context.active_class_section_id, context);
     var id = String(data.transaction_id || '').trim(); if (!isUuidV4(id)) throw apiError('INVALID_TRANSACTION_ID', 'transaction_id harus UUID v4.');
     var enrollmentId = sanitizeText(data.enrollment_id, 100), nisn = validateNisn(data.nisn), type = String(data.transaction_type || '').toUpperCase();
     if (type !== 'SETORAN' && type !== 'PENARIKAN') throw apiError('INVALID_TRANSACTION_TYPE', 'Jenis transaksi tidak valid.');
     var amount = Number(data.amount); if (!isFinite(amount) || Math.floor(amount) !== amount || amount <= 0 || amount > context.max_transaction_amount) throw apiError('INVALID_AMOUNT', 'Nominal transaksi tidak valid/melebihi batas.');
     var trxDate = normalizeBusinessDate(data.transaction_date);
-    var enrollment = assertActiveEnrollment(nisn, section.class_section_id, enrollmentId), student = findStudentMaster(nisn);
-    if (!student || student.status !== 'ACTIVE') throw apiError('STUDENT_NOT_ACTIVE', 'Siswa tidak aktif.');
+
+    var sectionId = sanitizeText(data.class_section_id || context.active_class_section_id, 100);
+    var studentNama = sanitizeText(data.nama, 100);
+    var academicYear = sanitizeText(data.academic_year, 50);
+    var className = sanitizeClass(data.class_name);
+
+    if (!studentNama || !sectionId || !academicYear || !className || !enrollmentId) {
+      var section = assertSectionAccess(context.active_class_section_id, context);
+      var enrollment = assertActiveEnrollment(nisn, section.class_section_id, enrollmentId), student = findStudentMaster(nisn);
+      if (!student || student.status !== 'ACTIVE') throw apiError('STUDENT_NOT_ACTIVE', 'Siswa tidak aktif.');
+      sectionId = section.class_section_id;
+      academicYear = section.academic_year;
+      className = section.class_name;
+      studentNama = student.nama;
+      enrollmentId = enrollment.enrollment_id;
+    }
 
     var ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS), h = ensureHeaders(sheet, TRANSACTION_HEADERS), idx = headerIndexMap(h), rows = sheet.getDataRange().getValues();
     var current = 0;
@@ -576,7 +600,7 @@ function processTransaction(data, context) {
         else if (t === 'PENARIKAN') current -= a;
       }
       if (String(rows[r][idx.transaction_id] || '').trim() === id) {
-        var same = String(rows[r][idx.enrollment_id] || '').trim() === enrollment.enrollment_id && rowNisn === nisn && String(rows[r][idx.class_section_id] || '').trim() === section.class_section_id && String(rows[r][idx.transaction_type] || '').toUpperCase() === type && parseMoney(rows[r][idx.amount]) === amount && normalizeBusinessDate(rows[r][idx.transaction_date]) === trxDate;
+        var same = String(rows[r][idx.enrollment_id] || '').trim() === enrollmentId && rowNisn === nisn && String(rows[r][idx.class_section_id] || '').trim() === sectionId && String(rows[r][idx.transaction_type] || '').toUpperCase() === type && parseMoney(rows[r][idx.amount]) === amount && normalizeBusinessDate(rows[r][idx.transaction_date]) === trxDate;
         if (!same || isVoid) throw apiError('IDEMPOTENCY_CONFLICT', 'transaction_id sudah dipakai untuk payload berbeda/VOID.');
         return { transaction: transactionFromRow(rows[r], idx), idempotent: true, newBalance: current };
       }
@@ -586,12 +610,12 @@ function processTransaction(data, context) {
     var now = formatDateTimeJakarta(new Date()), description = sanitizeText(data.description || (type === 'SETORAN' ? 'Setoran Tabungan' : 'Penarikan Tabungan'), 200);
     var obj = {
       transaction_id: id,
-      enrollment_id: enrollment.enrollment_id,
+      enrollment_id: enrollmentId,
       nisn: "'" + nisn,
-      nama: student.nama,
-      class_section_id: section.class_section_id,
-      academic_year: section.academic_year,
-      class_name: section.class_name,
+      nama: studentNama,
+      class_section_id: sectionId,
+      academic_year: academicYear,
+      class_name: className,
       transaction_type: type,
       amount: amount,
       transaction_date: trxDate,
@@ -603,7 +627,8 @@ function processTransaction(data, context) {
       status: 'ACTIVE',
       void_reason: '', voided_by_user_id: '', voided_by_name: '', voided_at: ''
     };
-    appendObjectRow(sheet, h, obj); sheet.getRange(sheet.getLastRow(), idx.nisn + 1).setNumberFormat('@'); SpreadsheetApp.flush();
+    appendObjectRow(sheet, h, obj);
+    SpreadsheetApp.flush();
     var newBalance = type === 'SETORAN' ? current + amount : current - amount;
     return { transaction: transactionFromObject(obj), idempotent: false, newBalance: newBalance };
   } finally { lock.releaseLock(); }
